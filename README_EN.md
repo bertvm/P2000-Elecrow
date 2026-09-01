@@ -40,6 +40,8 @@ The display mode can be switched between the alert list and the single-alert inf
 
 Open **Service filter** in the configuration screen to independently enable or disable Fire brigade, Police, Ambulance, Lifeliner/trauma helicopter and other alerts. The same filters are available in the web configuration and persist after a restart.
 
+When **SD-card logging** is enabled, keep swiping up beyond the oldest current API alert to enter **ARCHIVE**. Older alerts are read newest-first and one page at a time from `/p2000.csv`, so the complete log is never loaded into memory. Swipe up to go further back and down to eventually return to the current alerts. Alerts still present in the current API list are omitted from the archive view.
+
 When SD-card logging is enabled, new alerts are appended to `/p2000.csv`. **Format SD** erases the card after an additional confirmation and creates a FAT filesystem suitable for logging.
 
 The GT911 touch controller uses GPIO19 for SDA and GPIO20 for SCL.

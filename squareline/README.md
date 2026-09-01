@@ -10,3 +10,5 @@ Projectinstellingen:
 - LVGL: 8.3.11
 
 De PlatformIO-firmware gebruikt dezelfde vormgeving rechtstreeks via Arduino_GFX. Wijzigingen in SquareLine worden daarom niet automatisch in `src/main.cpp` verwerkt; neem gewijzigde afmetingen, kleuren en teksten daar eveneens over of exporteer later een volledige LVGL-interface.
+
+De SD-archiefmodus hergebruikt tijdens runtime `scrMessages` en de drie bestaande meldingskaarten. De firmware vervangt daarbij dynamisch de titel door **ARCHIEF**, het sectielabel door **SD-ARCHIEF** en de voettekst door de positie in het logbestand. Hiervoor zijn geen extra SquareLine-objecten nodig en blijven `P2000.spj` en `P2000.sll` compatibel met het eerder geteste project.

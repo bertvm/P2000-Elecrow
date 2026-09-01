@@ -42,8 +42,13 @@ constexpr uint8_t MAX_ALARMS = 8;
 const char *ALARMRINGDROID_URL = "https://beta.alarmeringdroid.nl/api2/find/";
 constexpr uint8_t TOUCH_SDA = 19, TOUCH_SCL = 20;
 Alarm alarms[MAX_ALARMS];
+Alarm archiveAlarms[MAX_ALARMS];
 uint8_t alarmCount = 0;
 uint8_t firstVisibleAlarm = 0;
+uint8_t archiveAlarmCount = 0;
+uint8_t archiveFirstVisible = 0;
+uint32_t archiveOffset = 0;
+bool archiveMode = false;
 uint8_t infoAlarmIndex = 0;
 String newestInfoId;
 uint8_t touchAddress = 0;
@@ -75,6 +80,7 @@ WebServer server(80);
 TaskHandle_t webServerTaskHandle = nullptr;
 void connectWifi();
 String selectedRegionsLabel(uint8_t maxChars);
+bool serviceMatches(const Alarm &alarm);
 int8_t renderedMessageLayout = -1; // -1=invalid, 0=list, 1=info
 String lastHeaderSignature;
 String lastListCardSignature[3];
@@ -354,6 +360,67 @@ void appendAlarmLog(const Alarm &alarm) {
   log.close();
 }
 
+bool parseCsvAlarm(const String &line, Alarm &alarm) {
+  String values[6], value;
+  uint8_t column = 0;
+  bool quoted = false;
+  for (size_t i = 0; i <= line.length(); ++i) {
+    char c = i < line.length() ? line[i] : ',';
+    if (c == '"') {
+      if (quoted && i + 1 < line.length() && line[i + 1] == '"') { value += '"'; ++i; }
+      else quoted = !quoted;
+    } else if (c == ',' && !quoted) {
+      if (column < 6) values[column++] = value;
+      value = "";
+    } else if (c != '\r' && c != '\n') value += c;
+  }
+  if (column < 6 || values[0] == "id") return false;
+  alarm.id = values[0]; alarm.time = values[1]; alarm.region = values[2];
+  alarm.place = values[3]; alarm.caps = values[4]; alarm.text = values[5];
+  alarm.service = "";
+  return alarm.id.length() || alarm.text.length();
+}
+bool previousCsvLine(File &file, uint32_t &cursor, String &line) {
+  while (cursor > 0) {
+    file.seek(cursor - 1); char c = file.read();
+    if (c != '\n' && c != '\r') break;
+    --cursor;
+  }
+  if (!cursor) return false;
+  uint32_t end = cursor, start = end;
+  while (start > 0) {
+    file.seek(start - 1);
+    if (file.read() == '\n') break;
+    --start;
+  }
+  line = ""; file.seek(start);
+  while (file.position() < end) line += (char)file.read();
+  cursor = start;
+  return true;
+}
+bool isCurrentAlarm(const String &id) {
+  if (!id.length()) return false;
+  for (uint8_t i = 0; i < alarmCount; ++i) if (alarms[i].id == id) return true;
+  return false;
+}
+bool loadArchivePage(uint32_t offset) {
+  archiveAlarmCount = 0; archiveFirstVisible = 0;
+  if (!sdReady && !initSdCard()) { statusLine = "SD-archief niet beschikbaar"; return false; }
+  File file = SD.open("/p2000.csv", FILE_READ);
+  if (!file) { statusLine = "Nog geen SD-archief"; return false; }
+  uint32_t cursor = file.size(), matched = 0;
+  String line; Alarm candidate;
+  while (previousCsvLine(file, cursor, line)) {
+    if (!parseCsvAlarm(line, candidate) || isCurrentAlarm(candidate.id) || !serviceMatches(candidate)) continue;
+    if (matched++ < offset) continue;
+    archiveAlarms[archiveAlarmCount++] = candidate;
+    if (archiveAlarmCount >= MAX_ALARMS) break;
+  }
+  file.close(); archiveOffset = offset;
+  statusLine = archiveAlarmCount ? "SD-archief" : "Einde van SD-archief";
+  return archiveAlarmCount > 0;
+}
+
 String field(JsonObject obj, const char *a, const char *b = "") {
   if (obj[a].is<const char*>()) return String(obj[a].as<const char*>());
   if (*b && obj[b].is<const char*>()) return String(obj[b].as<const char*>());
@@ -521,6 +588,9 @@ void drawScreen() {
     }
     return;
   }
+  Alarm *shownAlarms = archiveMode ? archiveAlarms : alarms;
+  uint8_t shownCount = archiveMode ? archiveAlarmCount : alarmCount;
+  uint8_t shownFirst = archiveMode ? archiveFirstVisible : firstVisibleAlarm;
   bool fullRedraw = renderedMessageLayout != 0;
   gfx->setTextWrap(false);
   if (fullRedraw) {
@@ -528,22 +598,22 @@ void drawScreen() {
     lastHeaderSignature = ""; lastFooterSignature = "";
     for (String &signature : lastListCardSignature) signature = "";
     renderedMessageLayout = 0;
-    gfx->setTextColor(UI_ACCENT); gfx->setTextSize(1); gfx->setCursor(24, 82); gfx->print("LAATSTE MELDINGEN");
+    gfx->setTextColor(UI_ACCENT); gfx->setTextSize(1); gfx->setCursor(24, 82); gfx->print(archiveMode ? "SD-ARCHIEF" : "LAATSTE MELDINGEN");
   }
-  String currentHeader = headerSignature("P2000", 42);
+  String currentHeader = headerSignature(archiveMode ? "ARCHIEF" : "P2000", 42) + String(archiveMode);
   if (fullRedraw || currentHeader != lastHeaderSignature) {
-    drawUiHeader("P2000", 42);
+    drawUiHeader(archiveMode ? "ARCHIEF" : "P2000", 42);
     lastHeaderSignature = currentHeader;
   }
   for (uint8_t visible = 0; visible < 3; ++visible) {
-    uint8_t index = firstVisibleAlarm + visible;
-    String currentCard = index < alarmCount ? alarmSignature(alarms[index]) : "<leeg>";
+    uint8_t index = shownFirst + visible;
+    String currentCard = index < shownCount ? alarmSignature(shownAlarms[index]) : "<leeg>";
     if (!fullRedraw && currentCard == lastListCardSignature[visible]) continue;
     int y = 106 + visible * 110;
     // This rectangle fully covers the old rounded card without touching neighbours.
     gfx->fillRect(20, y - 2, 760, 104, UI_BG);
-    if (index < alarmCount) {
-      Alarm &a = alarms[index];
+    if (index < shownCount) {
+      Alarm &a = shownAlarms[index];
       uint16_t accent = alarmAccent(a);
       gfx->fillRoundRect(24, y, 752, 100, 12, UI_SURFACE);
       gfx->fillRoundRect(24, y, 8, 100, 4, accent);
@@ -557,15 +627,16 @@ void drawScreen() {
     }
     lastListCardSignature[visible] = currentCard;
   }
-  String footer = String(alarmCount) + "\x1f" + String(firstVisibleAlarm);
+  String footer = String(shownCount) + "\x1f" + String(shownFirst) + "\x1f" + String(archiveMode) + "\x1f" + String(archiveOffset);
   if (fullRedraw || footer != lastFooterSignature) {
     gfx->fillRect(0, 438, 800, 42, UI_BG);
-    if (!alarmCount) {
+    if (!shownCount) {
     gfx->fillRoundRect(24, 118, 752, 118, 12, UI_SURFACE);
     gfx->setTextColor(UI_TEXT); gfx->setTextSize(2); gfx->setCursor(258, 164); gfx->print("Nog geen P2000-berichten");
     } else {
-      gfx->setTextSize(1); gfx->setTextColor(UI_MUTED); gfx->setCursor(620, 452);
-      gfx->printf("Veeg omhoog  |  %u/%u", firstVisibleAlarm + 1, alarmCount);
+      gfx->setTextSize(1); gfx->setTextColor(UI_MUTED); gfx->setCursor(archiveMode ? 500 : 620, 452);
+      if (archiveMode) gfx->printf("SD-archief  |  %lu-%lu", (unsigned long)(archiveOffset + shownFirst + 1), (unsigned long)(archiveOffset + shownCount));
+      else gfx->printf("Veeg omhoog  |  %u/%u", firstVisibleAlarm + 1, alarmCount);
     }
     lastFooterSignature = footer;
   }
@@ -897,8 +968,26 @@ void handleTouch() {
     }
     else if (screenMode == MESSAGES && !swipeHandled) {
       if (!cfg.ticker && abs(y - touchStartY) >= 50) {
-        if (y < touchStartY && firstVisibleAlarm + 1 < alarmCount) ++firstVisibleAlarm;
-        if (y > touchStartY && firstVisibleAlarm > 0) --firstVisibleAlarm;
+        if (archiveMode) {
+          if (y < touchStartY) {
+            if (archiveFirstVisible + 3 < archiveAlarmCount) ++archiveFirstVisible;
+            else {
+              uint32_t oldOffset = archiveOffset;
+              uint8_t oldCount = archiveAlarmCount;
+              if (!loadArchivePage(oldOffset + oldCount)) loadArchivePage(oldOffset);
+              invalidateMessageUi();
+            }
+          } else if (archiveFirstVisible > 0) --archiveFirstVisible;
+          else if (archiveOffset > 0) {
+            uint32_t previousOffset = archiveOffset > MAX_ALARMS ? archiveOffset - MAX_ALARMS : 0;
+            loadArchivePage(previousOffset); invalidateMessageUi();
+          } else {
+            archiveMode = false; invalidateMessageUi();
+          }
+        } else if (y < touchStartY) {
+          if (firstVisibleAlarm + 1 < alarmCount) ++firstVisibleAlarm;
+          else if (loadArchivePage(0)) { archiveMode = true; invalidateMessageUi(); }
+        } else if (firstVisibleAlarm > 0) --firstVisibleAlarm;
         swipeHandled = true; drawScreen();
       } else if (cfg.ticker && abs(x - touchStartX) >= 50) {
         if (x < touchStartX && infoAlarmIndex + 1 < alarmCount) ++infoAlarmIndex;

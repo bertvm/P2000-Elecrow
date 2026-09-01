@@ -35,6 +35,8 @@ Veeg op het scherm omhoog voor oudere meldingen en omlaag om terug te gaan. De t
 
 Via **Dienstenfilter** kunnen Brandweer, Politie, Ambulance, Lifeliner/traumaheli en overige meldingen afzonderlijk worden in- of uitgeschakeld. Dezelfde filters staan op de webconfiguratie en blijven na een herstart bewaard.
 
+Als **SD-kaart logging** is ingeschakeld, kun je vanuit de meldingenlijst voorbij de oudste actuele API-melding omhoog blijven vegen. Het scherm schakelt dan naar **ARCHIEF** en leest oudere meldingen paginagewijs, nieuwste eerst, uit `/p2000.csv`. Hierdoor wordt niet het volledige logbestand in het geheugen geladen. Veeg omhoog om verder terug te gaan en omlaag om uiteindelijk naar de actuele meldingen terug te keren. Meldingen die nog in de actuele API-lijst staan worden in het archief overgeslagen.
+
 ## SquareLine Studio
 
 De bewerkbare 800×480-layout staat in [`squareline/P2000.spj`](squareline/P2000.spj). Laat `P2000.sll` in dezelfde map staan wanneer je het project in SquareLine Studio opent.
