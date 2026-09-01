@@ -1,0 +1,11 @@
+.DS_Store
+.pio/
+.vscode/
+backup/
+outputs/
+components/
+/P2000*.spj
+/P2000*.sll
+/P2000.slp
+/Themes.slt
+/project.info

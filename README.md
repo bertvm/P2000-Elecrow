@@ -1,38 +1,38 @@
-# P2000 on an Elecrow ESP32-S3 5-inch Display
+# P2000 op een Elecrow ESP32-S3 5-inch display
 
-This PlatformIO project displays the eight most recent P2000 alerts on the 800×480 screen and provides a settings page hosted on the ESP32.
+Dit PlatformIO-project toont de laatste acht P2000-meldingen op het 800×480-scherm en biedt een instellingenpagina op de ESP32.
 
-## Building and flashing
+De schermweergave gebruikt de donkere SquareLine-ontwerpstijl rechtstreeks via Arduino_GFX. Daardoor blijven de bestaande P2000-, WiFi-, touch- en SD-functies behouden en is geen afzonderlijke LVGL/SquareLine-export nodig om deze firmware te flashen.
 
-1. Open this folder with PlatformIO in VS Code.
-2. Connect the ESP32-S3 via USB and select **Upload**.
-3. After the first startup, connect to the `P2000-display` Wi-Fi network and open `http://192.168.77.1`.
-4. Save the Wi-Fi settings, regions, and capcodes. The API URL uses Alarmeringdroid by default. The page will then be accessible through the IP address assigned to the ESP32 by your router.
+Om zichtbaar flikkeren te beperken bewaart de renderer een inhoudssignatuur per bovenbalk, meldingskaart en voettekst. Een ongewijzigde API-response veroorzaakt geen tekenactie; bij veranderingen wordt alleen het betreffende schermvlak vernieuwd. Een volledig scherm wordt uitsluitend bij een echte schermwissel opnieuw opgebouwd.
 
-## Alarmeringdroid API
+## Bouwen en flashen
 
-By default, the firmware uses:
+1. Open deze map met PlatformIO in VS Code.
+2. Sluit de ESP32-S3 met USB aan en kies **Upload**.
+3. Verbind na de eerste start met wifi-netwerk `P2000-display` en open `http://192.168.77.1`.
+4. Sla wifi, regio en capcodes op. De API-URL staat standaard op Alarmeringdroid. Daarna is de pagina bereikbaar op het IP-adres dat de router aan de ESP32 geeft.
 
-```text
+## Alarmeringdroid-API
+
+Standaard gebruikt de firmware:
+
+```
 https://beta.alarmeringdroid.nl/api2/find/
 ```
 
-The endpoint returns an object containing a `meldingen` array. There are three region filters. An alert is displayed when its `regioid` matches at least one selected region. The **None** option disables only that particular selection. If all three filters are set to **None**, no alerts are displayed. Capcodes are matched against each alert’s `capcodes` array.
+De endpoint retourneert een object met een array `meldingen`. Er zijn drie regiofilters; een melding wordt getoond wanneer zijn `regioid` met minstens één geselecteerde regio overeenkomt. De optie **Geen** schakelt alleen die keuze uit. Staan alle drie op **Geen**, dan toont het scherm geen meldingen. Capcodes worden vergeleken met de `capcodes`-array van iedere melding.
 
-An alert includes fields such as `datum`, `tijd`, `tekstmelding`, `regioid`, `capstring`, and a `capcodes` array. The firmware can also read the alternative field names `time`, `text`, `body`, and `description`.
+Een melding bevat onder andere `datum`, `tijd`, `tekstmelding`, `regioid`, `capstring` en een `capcodes`-array. De firmware kan ook de alternatieve veldnamen `time`, `text`, `body` en `description` lezen.
 
-## Controls
+## Bediening
 
-Swipe up on the screen to view older alerts and swipe down to return. The counter in the top-right corner shows the current position within the list.
+Veeg op het scherm omhoog voor oudere meldingen en omlaag om terug te gaan. De teller rechtsboven toont de positie in de huidige lijst. Tik rechtsboven op **CONFIG** om de drie regio’s rechtstreeks op het scherm te kiezen. Tik op `<` of `>` naast een regio. Gebruik **Scan WiFi** om een netwerk te kiezen wanneer je wifi opnieuw wilt instellen. Gebruik **Handmatig** wanneer de scan geen resultaten geeft: vul SSID en wachtwoord rechtstreeks op het scherm in met het touch-toetsenbord en tik op **Opslaan**. De eerste configuratie zonder opgeslagen wifi gebruikt nog steeds toegangspunt **P2000-display** op `192.168.77.1`. In hetzelfde menu wissel je **Weergave** tussen de meldingenlijst en **Infoscherm – 1 kanaal**. Met **SD-kaart logging** schakel je CSV-logging van nieuwe meldingen naar `/p2000.csv` op een FAT32-geformatteerde microSD-kaart in of uit. **Formatteer SD** wist alle bestanden en maakt de kaart opnieuw als FAT-bestandssysteem klaar; de tweede bevestiging voorkomt een onbedoelde wisactie. Die modus toont één melding per scherm, met regio, plaats en volledige melding; veeg links/rechts om tussen meldingen te wisselen. Het gekozen bericht blijft in beeld bij verversen en wisselt alleen automatisch wanneer de API een nieuw bericht terugstuurt. Tik daarna op **Opslaan**. De GT911-touchcontroller gebruikt I²C op GPIO19 (SDA) en GPIO20 (SCL).
 
-Tap **CONFIG** in the top-right corner to select the three regions directly on the screen. Tap `<` or `>` next to a region. In the same menu, you can switch **Display mode** between the alert list and **Information screen – 1 channel**.
+## SquareLine Studio
 
-This mode displays one alert per screen, including the region, location, and full alert text. Swipe left or right to move between alerts. The selected alert remains on screen when the data is refreshed and changes automatically only when the API returns a new alert. Tap **Save** when finished.
+De bewerkbare 800×480-layout staat in [`squareline/P2000.spj`](squareline/P2000.spj). Laat `P2000.sll` in dezelfde map staan wanneer je het project in SquareLine Studio opent.
 
-The GT911 touch controller uses I²C on GPIO19 (SDA) and GPIO20 (SCL).
+De displayconfiguratie is afgestemd op de Elecrow **DIS07050H/CrowPanel 5.0"** (ESP32-S3-WROOM-1-N4R8, 800×480). De gebruikte RGB-pinconfiguratie komt overeen met de door Elecrow-gebruikers bevestigde Arduino_GFX-configuratie. Vergelijk dit alsnog met de pinout als uw print een andere revisie heeft.
 
-The display configuration is designed for the Elecrow **DIS07050H/CrowPanel 5.0"** (ESP32-S3-WROOM-1-N4R8, 800×480). The RGB pin configuration matches the Arduino_GFX configuration confirmed by Elecrow users. However, you should still compare it with the pinout if your board is a different revision.
-
-HTTPS certificates are deliberately not validated (`setInsecure()`), allowing public endpoints to work without certificate management. Preferably, use a trusted API and only a network you control.Arduino_GFX-configuratie. Vergelijk dit alsnog met de pinout als uw print een andere revisie heeft.
-
-
+HTTPS-certificaten worden bewust niet gevalideerd (`setInsecure()`), zodat publieke endpoints zonder certificaatbeheer werken. Gebruik bij voorkeur een vertrouwde API en alleen een netwerk dat u beheert.
