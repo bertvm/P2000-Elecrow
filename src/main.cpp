@@ -9,6 +9,7 @@
 #include <ArduinoJson.h>
 #include <WebServer.h>
 #include <Arduino_GFX_Library.h>
+#include "FreeSansBold10pt7b.h"
 
 // Elecrow DIS07050H / CrowPanel ESP32-S3 5 inch (800x480 RGB) pinout.
 #define GFX_BL  2
@@ -75,6 +76,7 @@ enum WifiInputField : uint8_t { WIFI_SSID_FIELD, WIFI_PASSWORD_FIELD };
 WifiInputField activeWifiField = WIFI_SSID_FIELD;
 String wifiDraftSsid, wifiDraftPassword;
 bool keyboardSymbols = false, keyboardUppercase = false;
+bool showWifiPassword = true;
 Preferences prefs;
 WebServer server(80);
 TaskHandle_t webServerTaskHandle = nullptr;
@@ -153,6 +155,19 @@ uint8_t serviceFilterIndex(ServiceIcon icon) {
 }
 void drawServiceIcon(ServiceIcon type, int x, int y) {
   if (type == ICON_NONE) return;
+  // Three-letter labels centred in the existing 32px icon area. Transparent
+  // text preserves the coloured badge in both the live and archive lists.
+  const char *label = type == ICON_FIRE ? "BRW" :
+                      type == ICON_POLICE ? "POL" :
+                      type == ICON_AMBULANCE ? "AMB" : nullptr;
+  if (label) {
+    gfx->setTextWrap(false);
+    gfx->setTextSize(2);
+    gfx->setTextColor(UI_TEXT);
+    gfx->setCursor(x - 2, y + 8);
+    gfx->print(label);
+    return;
+  }
   for (uint16_t &pixel : iconPixels) pixel = C_BLACK;
   if (type == ICON_FIRE) { // red fire engine with ladder and wheels
     iconRect(3, 13, 23, 12, C_RED); iconRect(23, 17, 6, 8, C_RED);
@@ -189,6 +204,29 @@ uint16_t alarmAccent(const Alarm &alarm) {
   }
 }
 
+// Pixel-based clipping for proportional headings; restore the built-in font
+// afterwards so capcodes, buttons and message wrapping keep their geometry.
+void drawHeading(String text, int x, int top, int width, uint8_t scale = 1) {
+  gfx->setFont(&FreeSansBold10pt7b);
+  gfx->setTextSize(scale);
+  gfx->setTextWrap(false);
+  int16_t bx, by; uint16_t bw, bh;
+  gfx->getTextBounds(text, 0, 0, &bx, &by, &bw, &bh);
+  if (bw > width) {
+    do {
+      if (!text.length()) break;
+      text.remove(text.length() - 1);
+      gfx->getTextBounds(text + "...", 0, 0, &bx, &by, &bw, &bh);
+    } while (bw > width);
+    text += "...";
+  }
+  gfx->getTextBounds(text, 0, 0, &bx, &by, &bw, &bh);
+  gfx->setTextColor(UI_TEXT);
+  gfx->setCursor(x - bx, top - by);
+  gfx->print(text);
+  gfx->setFont();
+  gfx->setTextSize(1);
+}
 void drawUiHeader(const char *title, uint8_t regionMaxChars = 40) {
   gfx->fillRect(0, 0, 800, 70, UI_SURFACE);
   gfx->drawFastHLine(0, 67, 800, UI_ACCENT);
@@ -196,7 +234,7 @@ void drawUiHeader(const char *title, uint8_t regionMaxChars = 40) {
   gfx->drawFastHLine(0, 69, 800, UI_ACCENT);
   // Strong title block copied from the approved SquareLine header design.
   gfx->fillRoundRect(16, 10, 6, 43, 3, UI_ACCENT);
-  gfx->setTextColor(UI_TEXT); gfx->setTextSize(3); gfx->setCursor(32, 8); gfx->print(title);
+  drawHeading(title, 32, 10, 600, 2);
   gfx->setTextColor(UI_MUTED); gfx->setTextSize(1); gfx->setCursor(33, 47);
   gfx->print(fitText(selectedRegionsLabel(regionMaxChars), regionMaxChars));
   if (WiFi.status() == WL_CONNECTED) gfx->print("  |  WiFi verbonden");
@@ -535,7 +573,7 @@ String headerSignature(const char *title, uint8_t regionChars) {
 }
 
 void drawScreen() {
-  if (cfg.ticker) {
+  if (cfg.ticker && !archiveMode) {
     bool fullRedraw = renderedMessageLayout != 1;
     gfx->setTextWrap(false);
     if (fullRedraw) {
@@ -565,8 +603,7 @@ void drawScreen() {
       gfx->fillRoundRect(24, 104, 752, 106, 12, UI_SURFACE);
       gfx->fillRoundRect(24, 104, 8, 106, 4, accent);
       drawServiceIcon(serviceIcon(a), 48, 128);
-      gfx->setTextColor(UI_TEXT); gfx->setTextSize(2); gfx->setCursor(98, 121);
-      gfx->print(fitText(a.place.length() ? a.place : a.region, 48));
+      drawHeading(a.place.length() ? a.place : a.region, 98, 121, 654);
       gfx->setTextColor(accent); gfx->setTextSize(1); gfx->setCursor(98, 153);
       gfx->print(fitText(a.time + "  |  " + a.caps, 86));
       gfx->setTextColor(UI_MUTED); gfx->setCursor(98, 178); gfx->print(fitText(a.region, 75));
@@ -619,8 +656,7 @@ void drawScreen() {
       gfx->fillRoundRect(24, y, 8, 100, 4, accent);
       gfx->fillCircle(66, y + 50, 27, accent);
       drawServiceIcon(serviceIcon(a), 50, y + 34);
-      gfx->setTextColor(UI_TEXT); gfx->setTextSize(2); gfx->setCursor(106, y + 13);
-      gfx->print(fitText(a.place.length() ? a.place : a.region, 48));
+      drawHeading(a.place.length() ? a.place : a.region, 106, y + 13, 646);
       gfx->setTextColor(UI_ACCENT); gfx->setTextSize(1); gfx->setCursor(106, y + 44);
       gfx->print(fitText(a.time + "  |  Capcode " + a.caps, 86));
       gfx->setTextColor(UI_MUTED); gfx->setCursor(106, y + 69); gfx->print(fitText(a.text, 94));
@@ -643,40 +679,7 @@ void drawScreen() {
 }
 
 
-void drawConfigScreen() {
-  invalidateMessageUi();
-  gfx->fillScreen(UI_BG); gfx->setTextWrap(false);
-  gfx->fillRect(0, 0, 800, 70, UI_SURFACE); gfx->fillRect(0, 67, 800, 3, UI_ACCENT);
-  gfx->setTextColor(UI_TEXT); gfx->setTextSize(2); gfx->setCursor(20, 11); gfx->print("Configuratie");
-  gfx->fillRoundRect(485, 8, 140, 45, 9, UI_SURFACE_2); gfx->drawRoundRect(485, 8, 140, 45, 9, UI_ACCENT);
-  gfx->setTextColor(UI_ACCENT); gfx->setTextSize(1); gfx->setCursor(505, 25); gfx->print("Scan WiFi");
-  gfx->fillRoundRect(635, 8, 150, 45, 9, UI_SURFACE_2); gfx->drawRoundRect(635, 8, 150, 45, 9, UI_ACCENT);
-  gfx->setCursor(655, 25); gfx->print("Handmatig");
-  gfx->setTextSize(1); gfx->setTextColor(UI_MUTED); gfx->setCursor(20, 47);
-  if (wifiCandidateSsid.length()) gfx->print("Gekozen: " + wifiCandidateSsid + "  |  AP: 192.168.77.1");
-  else if (manualWifiEntry) gfx->print("Handmatig: vul SSID en wachtwoord op het scherm in");
-  else gfx->print("Tik < of > om een regio te kiezen");
-  for (uint8_t i = 0; i < 3; ++i) {
-    int y = 85 + i * 75;
-    gfx->fillRoundRect(15, y, 80, 52, 9, UI_SURFACE_2); gfx->drawRoundRect(15, y, 80, 52, 9, UI_ACCENT);
-    gfx->setTextColor(UI_ACCENT); gfx->setTextSize(3); gfx->setCursor(42, y + 13); gfx->print("<");
-    gfx->fillRoundRect(105, y, 590, 52, 9, UI_SURFACE); gfx->setTextColor(UI_TEXT); gfx->setTextSize(1); gfx->setCursor(120, y + 19);
-    gfx->print("Regio " + String(i + 1) + ": " + regionName(cfg.regions[i]));
-    gfx->fillRoundRect(705, y, 80, 52, 9, UI_SURFACE_2); gfx->drawRoundRect(705, y, 80, 52, 9, UI_ACCENT);
-    gfx->setTextColor(UI_ACCENT); gfx->setTextSize(3); gfx->setCursor(732, y + 13); gfx->print(">");
-  }
-  gfx->fillRoundRect(105, 300, 590, 34, 8, UI_SURFACE); gfx->setTextColor(UI_TEXT); gfx->setTextSize(1); gfx->setCursor(120, 312);
-  gfx->print("Dienstenfilter: tik om te wijzigen");
-  gfx->fillRoundRect(105, 340, 590, 34, 8, UI_SURFACE); gfx->setTextColor(UI_TEXT); gfx->setCursor(120, 352);
-  gfx->print(cfg.ticker ? "Weergave: Infoscherm - 1 kanaal" : "Weergave: Meldingenlijst");
-  gfx->fillRoundRect(105, 380, 590, 34, 8, UI_SURFACE); gfx->setTextColor(cfg.sdLogging ? UI_AMBULANCE : UI_MUTED); gfx->setCursor(120, 392);
-  gfx->print(cfg.sdLogging ? "SD-kaart logging: Aan" : "SD-kaart logging: Uit");
-  gfx->fillRoundRect(20, 425, 185, 45, 10, UI_SURFACE_2); gfx->drawRoundRect(20, 425, 185, 45, 10, UI_ACCENT);
-  gfx->setTextColor(UI_ACCENT); gfx->setTextSize(1); gfx->setCursor(90, 442); gfx->print("Terug");
-  gfx->fillRoundRect(220, 425, 230, 45, 10, UI_SURFACE_2); gfx->drawRoundRect(220, 425, 230, 45, 10, UI_FIRE);
-  gfx->setTextColor(UI_FIRE); gfx->setCursor(285, 442); gfx->print("Formatteer SD");
-  gfx->fillRoundRect(470, 425, 310, 45, 10, UI_ACCENT); gfx->setTextColor(UI_BG); gfx->setTextSize(1); gfx->setCursor(600, 442); gfx->print("Opslaan");
-}
+#include "config_ui.h"
 void drawServiceFilterScreen() {
   invalidateMessageUi();
   static const char *names[] = {"Brandweer", "Politie", "Ambulance", "Lifeliner / traumaheli", "Overig"};
@@ -729,20 +732,24 @@ const char *keyboardRow(uint8_t row) {
 String visiblePassword() {
   // The local touchscreen is used for initial setup, so show exactly what was
   // entered to make uppercase letters, digits and symbols easy to verify.
-  return wifiDraftPassword;
+  if (showWifiPassword) return wifiDraftPassword;
+  String hidden;
+  for (size_t i=0; i<wifiDraftPassword.length(); ++i) hidden += '*';
+  return hidden;
 }
 void drawWifiInputScreen() {
   invalidateMessageUi();
   gfx->fillScreen(BLACK); gfx->setTextWrap(false); gfx->setTextColor(WHITE); gfx->setTextSize(2);
   gfx->setCursor(18, 12); gfx->print("WiFi instellen");
   gfx->setTextColor(CYAN); gfx->setCursor(680, 12); gfx->print("Terug");
+  gfx->setTextSize(1); gfx->setCursor(510, 18); gfx->print(showWifiPassword ? "Verberg wachtwoord" : "Toon wachtwoord");
   gfx->setTextSize(1); gfx->setTextColor(LIGHTGREY); gfx->setCursor(18, 38); gfx->print("Tik een veld aan en gebruik het toetsenbord");
   gfx->drawRect(15, 52, 770, 40, activeWifiField == WIFI_SSID_FIELD ? CYAN : DARKGREY);
   gfx->setTextColor(LIGHTGREY); gfx->setCursor(25, 58); gfx->print("SSID");
-  gfx->setTextColor(WHITE); gfx->setTextSize(2); gfx->setCursor(95, 63); gfx->print(wifiDraftSsid);
+  gfx->setTextColor(WHITE); gfx->setTextSize(2); gfx->setCursor(95, 63); gfx->print(fitText(wifiDraftSsid, 54));
   gfx->drawRect(15, 105, 770, 40, activeWifiField == WIFI_PASSWORD_FIELD ? CYAN : DARKGREY);
   gfx->setTextColor(LIGHTGREY); gfx->setTextSize(1); gfx->setCursor(25, 111); gfx->print("Wachtwoord");
-  gfx->setTextColor(WHITE); gfx->setTextSize(2); gfx->setCursor(145, 116); gfx->print(visiblePassword());
+  gfx->setTextColor(WHITE); gfx->setTextSize(2); gfx->setCursor(145, 116); gfx->print(fitText(visiblePassword(), 50));
   for (uint8_t row = 0; row < 4; ++row) {
     String keys = keyboardRow(row); int width = 760 / keys.length(); int y = 160 + row * 43;
     for (uint8_t key = 0; key < keys.length(); ++key) {
@@ -759,14 +766,15 @@ void drawWifiInputScreen() {
   gfx->drawRect(435, 350, 350, 75, GREEN); gfx->setTextColor(GREEN); gfx->setTextSize(2); gfx->setCursor(535, 375); gfx->print("Opslaan");
 }
 void openWifiInput(const String &ssid) {
-  wifiDraftSsid = ssid; wifiDraftPassword = ""; activeWifiField = WIFI_SSID_FIELD;
+  wifiDraftSsid = ssid; wifiDraftPassword = ssid == configDraft.ssid ? configDraft.password : ""; activeWifiField = WIFI_SSID_FIELD;
   keyboardSymbols = false; keyboardUppercase = false; screenMode = WIFI_INPUT; drawWifiInputScreen();
 }
 void saveWifiInput() {
   if (!wifiDraftSsid.length()) { statusLine = "WiFi-naam ontbreekt"; drawWifiInputScreen(); return; }
-  cfg.ssid = wifiDraftSsid; cfg.password = wifiDraftPassword; wifiCandidateSsid = ""; manualWifiEntry = false;
-  saveSettings(); WiFi.softAPdisconnect(true); WiFi.disconnect(); connectWifi();
-  statusLine = "Wifi opnieuw verbinden..."; screenMode = MESSAGES; drawScreen();
+  configDraft.ssid = wifiDraftSsid; configDraft.password = wifiDraftPassword;
+  wifiCandidateSsid = ""; manualWifiEntry = false;
+  configNotice = "WiFi-invoer gereed. Tik Opslaan / Verbinden.";
+  configPage = WIFI_PAGE; screenMode = CONFIG; drawConfigScreen();
 }
 void startConfigurationAp() {
   IPAddress apIp(192, 168, 77, 1), gateway(192, 168, 77, 1), mask(255, 255, 255, 0);
@@ -809,7 +817,7 @@ void cycleRegion(uint8_t slot, int direction) {
 }
 void handleTap(int x, int y) {
   if (screenMode == MESSAGES) {
-    if (x >= 645 && x <= 785 && y <= 65) { screenMode = CONFIG; drawConfigScreen(); }
+    if (x >= 645 && x <= 785 && y <= 65) beginConfig();
     return;
   }
   if (screenMode == WIFI_SCAN) {
@@ -821,6 +829,7 @@ void handleTap(int x, int y) {
     return;
   }
   if (screenMode == WIFI_INPUT) {
+    if (x >= 500 && x < 660 && y <= 50) {showWifiPassword = !showWifiPassword;drawWifiInputScreen();return;}
     if (x >= 660 && y <= 50) { screenMode = CONFIG; drawConfigScreen(); return; }
     if (y >= 52 && y < 95) { activeWifiField = WIFI_SSID_FIELD; drawWifiInputScreen(); return; }
     if (y >= 105 && y < 148) { activeWifiField = WIFI_PASSWORD_FIELD; drawWifiInputScreen(); return; }
@@ -830,8 +839,8 @@ void handleTap(int x, int y) {
       if (key < keys.length()) {
         char character = keys[key];
         if (!keyboardSymbols && keyboardUppercase && character >= 'a' && character <= 'z') character -= ('a' - 'A');
-        if (activeWifiField == WIFI_SSID_FIELD) wifiDraftSsid += character;
-        else wifiDraftPassword += character;
+        if (activeWifiField == WIFI_SSID_FIELD) { if (wifiDraftSsid.length()<32) wifiDraftSsid += character; }
+        else if (wifiDraftPassword.length()<64) wifiDraftPassword += character;
         drawWifiInputScreen();
       }
       return;
@@ -855,32 +864,7 @@ void handleTap(int x, int y) {
     } else if (y >= 265 && y <= 360) { screenMode = CONFIG; drawConfigScreen(); }
     return;
   }
-  if (screenMode == SERVICE_FILTER) {
-    if (y >= 85 && y < 395) {
-      uint8_t service = (y - 85) / 62;
-      if (service < 5) { cfg.services[service] = !cfg.services[service]; drawServiceFilterScreen(); }
-    } else if (y >= 415) { screenMode = CONFIG; drawConfigScreen(); }
-    return;
-  }
-  if (y <= 65 && x >= 635) {
-    wifiCandidateSsid = ""; manualWifiEntry = true; openWifiInput(""); return;
-  }
-  if (y <= 65 && x >= 485) { screenMode = WIFI_SCAN; scanWifiNetworks(); return; }
-  if (y >= 85 && y < 295) {
-    uint8_t slot = (y - 85) / 75;
-    if (x < 100) { cycleRegion(slot, -1); drawConfigScreen(); }
-    else if (x > 700) { cycleRegion(slot, 1); drawConfigScreen(); }
-  } else if (y >= 300 && y < 335) {
-    screenMode = SERVICE_FILTER; drawServiceFilterScreen();
-  } else if (y >= 340 && y < 375) {
-    cfg.ticker = !cfg.ticker; drawConfigScreen();
-  } else if (y >= 380 && y < 415) {
-    cfg.sdLogging = !cfg.sdLogging; drawConfigScreen();
-  } else if (y >= 425 && y <= 470) {
-    if (x >= 470) { saveSettings(); if (cfg.sdLogging) initSdCard(); screenMode = MESSAGES; drawScreen(); }
-    else if (x >= 220) { screenMode = SD_FORMAT_CONFIRM; drawSdFormatConfirmScreen(); }
-    else { screenMode = MESSAGES; drawScreen(); }
-  }
+  if (screenMode == CONFIG) handleConfigTap(x, y);
 }
 
 bool gt911Read(uint16_t reg, uint8_t *data, size_t length) {
@@ -966,8 +950,13 @@ void handleTouch() {
       touchPressed = true; swipeHandled = false; touchStartY = y; touchStartX = x;
       Serial.printf("Touch: x=%d y=%d\n", x, y);
     }
+    else if (screenMode == CONFIG && configPage == REGION_PAGE && !swipeHandled && abs(y-touchStartY)>=50) {
+      if (y<touchStartY && regionStart+4<REGION_COUNT) regionStart+=4;
+      else if (y>touchStartY) regionStart=regionStart>=4?regionStart-4:0;
+      swipeHandled=true;drawConfigScreen();
+    }
     else if (screenMode == MESSAGES && !swipeHandled) {
-      if (!cfg.ticker && abs(y - touchStartY) >= 50) {
+      if ((!cfg.ticker || archiveMode) && abs(y - touchStartY) >= 50) {
         if (archiveMode) {
           if (y < touchStartY) {
             if (archiveFirstVisible + 3 < archiveAlarmCount) ++archiveFirstVisible;
@@ -1100,6 +1089,11 @@ void setup() {
   }
 }
 void loop() {
+  static String lastConfigWifiStatus;
+  if (screenMode == CONFIG && configPage == WIFI_PAGE) {
+    String state = String((int)WiFi.status()) + WiFi.localIP().toString();
+    if (state != lastConfigWifiStatus) { lastConfigWifiStatus = state; drawConfigScreen(); }
+  }
   if (!configurationMode) handleTouch();
   if (cfg.ssid.length() && WiFi.status() != WL_CONNECTED && millis() > nextWifiRetry) {
     statusLine = "Wifi opnieuw verbinden...";
