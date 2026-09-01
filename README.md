@@ -1,8 +1,12 @@
 # P2000 op een Elecrow ESP32-S3 5-inch display
 
+**Nederlands** | [English](README_EN.md)
+
 Dit PlatformIO-project toont de laatste acht P2000-meldingen op het 800×480-scherm en biedt een instellingenpagina op de ESP32.
 
 De schermweergave gebruikt de donkere SquareLine-ontwerpstijl rechtstreeks via Arduino_GFX. Daardoor blijven de bestaande P2000-, WiFi-, touch- en SD-functies behouden en is geen afzonderlijke LVGL/SquareLine-export nodig om deze firmware te flashen.
+
+![P2000-schermlayout](docs/lvgl-layout.svg)
 
 Om zichtbaar flikkeren te beperken bewaart de renderer een inhoudssignatuur per bovenbalk, meldingskaart en voettekst. Een ongewijzigde API-response veroorzaakt geen tekenactie; bij veranderingen wordt alleen het betreffende schermvlak vernieuwd. Een volledig scherm wordt uitsluitend bij een echte schermwissel opnieuw opgebouwd.
 
