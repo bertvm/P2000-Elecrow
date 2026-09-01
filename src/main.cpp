@@ -25,6 +25,7 @@ struct Settings {
   String ssid, password, apiUrl, regions[3], capcodes;
   bool ticker = false;
   bool sdLogging = false;
+  bool services[5] = {true, true, true, true, true};
   uint32_t intervalSec = 60;
 } cfg;
 
@@ -55,7 +56,7 @@ unsigned long nextSdRetry = 0;
 String statusLine = "Configuratie laden...";
 bool sdReady = false;
 bool configurationMode = false;
-enum ScreenMode { MESSAGES, CONFIG, WIFI_SCAN, WIFI_INPUT, SD_FORMAT_CONFIRM };
+enum ScreenMode { MESSAGES, CONFIG, SERVICE_FILTER, WIFI_SCAN, WIFI_INPUT, SD_FORMAT_CONFIRM };
 ScreenMode screenMode = MESSAGES;
 constexpr uint8_t MAX_WIFI_NETWORKS = 8;
 String scannedWifiSsids[MAX_WIFI_NETWORKS];
@@ -91,6 +92,7 @@ void invalidateMessageUi() {
 // Compact 32 x 32 RGB565 icons.  They are drawn from a RGB565 pixel buffer,
 // avoiding image files and keeping the display responsive.
 enum ServiceIcon : uint8_t { ICON_NONE, ICON_FIRE, ICON_POLICE, ICON_AMBULANCE, ICON_HELICOPTER };
+enum ServiceFilter : uint8_t { FILTER_FIRE, FILTER_POLICE, FILTER_AMBULANCE, FILTER_HELICOPTER, FILTER_OTHER };
 constexpr uint8_t ICON_SIZE = 32;
 constexpr uint16_t C_BLACK = 0x0000, C_WHITE = 0xFFFF, C_RED = 0xF800;
 constexpr uint16_t C_BLUE = 0x001F, C_YELLOW = 0xFFE0, C_GREY = 0x8410;
@@ -119,10 +121,7 @@ void iconCircle(int cx, int cy, int radius, uint16_t colour) {
     if (dx * dx + dy * dy <= radius * radius) iconPixels[py * ICON_SIZE + px] = colour;
   }
 }
-ServiceIcon serviceIcon(const Alarm &a) {
-  // Alarmeringdroid links the service to its capcode. Keywords handle APIs
-  // which expose only the capcode description instead of `dienst`.
-  String source = a.service + " " + a.caps + " " + a.text;
+ServiceIcon classifyService(String source) {
   source.toLowerCase();
   if (source.indexOf("trauma") >= 0 || source.indexOf("lifeliner") >= 0 ||
       source.indexOf("mmt") >= 0 || source.indexOf("0120901") >= 0) return ICON_HELICOPTER;
@@ -130,6 +129,21 @@ ServiceIcon serviceIcon(const Alarm &a) {
   if (source.indexOf("politie") >= 0) return ICON_POLICE;
   if (source.indexOf("ambulance") >= 0 || source.indexOf("rav") >= 0 || source.indexOf("mka") >= 0) return ICON_AMBULANCE;
   return ICON_NONE;
+}
+ServiceIcon serviceIcon(const Alarm &a) {
+  // Alarmeringdroid links the service to its capcode. Keywords handle APIs
+  // which expose only the capcode description instead of `dienst`.
+  String source = a.service + " " + a.caps + " " + a.text;
+  return classifyService(source);
+}
+uint8_t serviceFilterIndex(ServiceIcon icon) {
+  switch (icon) {
+    case ICON_FIRE: return FILTER_FIRE;
+    case ICON_POLICE: return FILTER_POLICE;
+    case ICON_AMBULANCE: return FILTER_AMBULANCE;
+    case ICON_HELICOPTER: return FILTER_HELICOPTER;
+    default: return FILTER_OTHER;
+  }
 }
 void drawServiceIcon(ServiceIcon type, int x, int y) {
   if (type == ICON_NONE) return;
@@ -188,7 +202,7 @@ void drawUiHeader(const char *title, uint8_t regionMaxChars = 40) {
 
 const char PAGE[] PROGMEM = R"HTML(
 <!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
-<style>body{font:16px system-ui;max-width:640px;margin:2em auto;padding:0 1em}input,select{width:100%;box-sizing:border-box;padding:.6em;margin:.2em 0 1em}button{padding:.7em 1.2em}small{color:#555}</style>
+<style>body{font:16px system-ui;max-width:640px;margin:2em auto;padding:0 1em}input,select{width:100%;box-sizing:border-box;padding:.6em;margin:.2em 0 1em}input[type=checkbox]{width:auto;margin:.5em}fieldset{margin:0 0 1em}fieldset label{display:block}button{padding:.7em 1.2em}small{color:#555}</style>
 <h1>P2000 display</h1><form method=post action=/save>
 <label>Wifi-naam</label><input name=ssid required value="%SSID%">
 <label>Wifi-wachtwoord</label><input name=password type=password placeholder="ongewijzigd laten om te bewaren">
@@ -197,6 +211,12 @@ const char PAGE[] PROGMEM = R"HTML(
 <label>Regio 2</label><select name=region2>%REGION2_OPTIONS%</select>
 <label>Regio 3</label><select name=region3>%REGION3_OPTIONS%</select>
 <label>Weergave</label><select name=display><option value="list" %LIST_SELECTED%>Meldingenlijst</option><option value="ticker" %TICKER_SELECTED%>Infoscherm - 1 kanaal</option></select>
+<fieldset><legend>Diensten weergeven</legend>
+<label><input type=checkbox name=fire %FIRE_CHECKED%> Brandweer</label>
+<label><input type=checkbox name=police %POLICE_CHECKED%> Politie</label>
+<label><input type=checkbox name=ambulance %AMBULANCE_CHECKED%> Ambulance</label>
+<label><input type=checkbox name=helicopter %HELICOPTER_CHECKED%> Lifeliner / traumaheli</label>
+<label><input type=checkbox name=other %OTHER_CHECKED%> Overig</label></fieldset>
 <label>SD-kaart logging</label><select name=sdlog><option value="on" %SDLOG_ON%>Aan</option><option value="off" %SDLOG_OFF%>Uit</option></select>
 <label>Capcodes (komma-gescheiden)</label><input name=capcodes value="%CAPS%" placeholder="bijv. 0123456,0765432">
 <label>Verversing (seconden, minimaal 15)</label><input name=interval type=number min=15 value="%INTERVAL%">
@@ -258,6 +278,8 @@ String settingsPage() {
   page.replace("%REGION3_OPTIONS%", regionOptions(cfg.regions[2])); page.replace("%CAPS%", tpl("CAPS"));
   page.replace("%LIST_SELECTED%", cfg.ticker ? "" : "selected");
   page.replace("%TICKER_SELECTED%", cfg.ticker ? "selected" : "");
+  const char *serviceTokens[] = {"%FIRE_CHECKED%", "%POLICE_CHECKED%", "%AMBULANCE_CHECKED%", "%HELICOPTER_CHECKED%", "%OTHER_CHECKED%"};
+  for (uint8_t i = 0; i < 5; ++i) page.replace(serviceTokens[i], cfg.services[i] ? "checked" : "");
   page.replace("%SDLOG_ON%", cfg.sdLogging ? "selected" : "");
   page.replace("%SDLOG_OFF%", cfg.sdLogging ? "" : "selected");
   page.replace("%INTERVAL%", tpl("INTERVAL")); page.replace("%STATUS%", tpl("STATUS"));
@@ -277,6 +299,8 @@ void loadSettings() {
   cfg.capcodes = prefs.isKey("caps") ? prefs.getString("caps") : "";
   cfg.ticker = prefs.isKey("ticker") ? prefs.getBool("ticker") : false;
   cfg.sdLogging = prefs.isKey("sdlog") ? prefs.getBool("sdlog") : false;
+  const char *serviceKeys[] = {"svcFire", "svcPolice", "svcAmb", "svcHeli", "svcOther"};
+  for (uint8_t i = 0; i < 5; ++i) cfg.services[i] = prefs.isKey(serviceKeys[i]) ? prefs.getBool(serviceKeys[i]) : true;
   cfg.intervalSec = prefs.isKey("int") ? prefs.getUInt("int") : 60;
   prefs.end();
 }
@@ -284,7 +308,10 @@ void saveSettings() {
   prefs.begin("p2000", false);
   prefs.putString("ssid", cfg.ssid); prefs.putString("pass", cfg.password); prefs.putString("url", cfg.apiUrl);
   prefs.putString("reg1", cfg.regions[0]); prefs.putString("reg2", cfg.regions[1]); prefs.putString("reg3", cfg.regions[2]);
-  prefs.putString("caps", cfg.capcodes); prefs.putBool("ticker", cfg.ticker); prefs.putBool("sdlog", cfg.sdLogging); prefs.putUInt("int", cfg.intervalSec); prefs.end();
+  prefs.putString("caps", cfg.capcodes); prefs.putBool("ticker", cfg.ticker); prefs.putBool("sdlog", cfg.sdLogging); prefs.putUInt("int", cfg.intervalSec);
+  const char *serviceKeys[] = {"svcFire", "svcPolice", "svcAmb", "svcHeli", "svcOther"};
+  for (uint8_t i = 0; i < 5; ++i) prefs.putBool(serviceKeys[i], cfg.services[i]);
+  prefs.end();
 }
 
 bool initSdCard(bool formatIfEmpty = false) {
@@ -361,6 +388,9 @@ bool matchesFilters(JsonObject item) {
   // With no selected region, never fall back to a nationwide feed.
   return false;
 }
+bool serviceMatches(const Alarm &alarm) {
+  return cfg.services[serviceFilterIndex(serviceIcon(alarm))];
+}
 void readAlarms(const String &body) {
   JsonDocument doc; DeserializationError err = deserializeJson(doc, body);
   if (err) { statusLine = "API geeft geen geldige JSON"; return; }
@@ -379,7 +409,7 @@ void readAlarms(const String &body) {
   for (JsonObject item : list) {
     if (!matchesFilters(item)) continue;
     if (alarmCount >= MAX_ALARMS) break;
-    Alarm &a = alarms[alarmCount++];
+    Alarm &a = alarms[alarmCount];
     a.id = field(item, "id");
     a.time = field(item, "timestamp", "time");
     if (!a.time.length()) a.time = field(item, "datum") + " " + field(item, "tijd");
@@ -390,6 +420,8 @@ void readAlarms(const String &body) {
     a.text = field(item, "message", "text");
     if (!a.text.length()) a.text = field(item, "tekstmelding", "melding");
     if (!a.text.length()) a.text = field(item, "body", "description");
+    if (!serviceMatches(a)) continue;
+    ++alarmCount;
     bool alreadyListed = false;
     for (uint8_t i = 0; i < previousCount; ++i) if (a.id.length() && a.id == previousIds[i]) { alreadyListed = true; break; }
     if (!alreadyListed) appendAlarmLog(a);
@@ -562,15 +594,33 @@ void drawConfigScreen() {
     gfx->fillRoundRect(705, y, 80, 52, 9, UI_SURFACE_2); gfx->drawRoundRect(705, y, 80, 52, 9, UI_ACCENT);
     gfx->setTextColor(UI_ACCENT); gfx->setTextSize(3); gfx->setCursor(732, y + 13); gfx->print(">");
   }
-  gfx->fillRoundRect(105, 300, 590, 38, 8, UI_SURFACE); gfx->setTextColor(UI_TEXT); gfx->setTextSize(1); gfx->setCursor(120, 314);
+  gfx->fillRoundRect(105, 300, 590, 34, 8, UI_SURFACE); gfx->setTextColor(UI_TEXT); gfx->setTextSize(1); gfx->setCursor(120, 312);
+  gfx->print("Dienstenfilter: tik om te wijzigen");
+  gfx->fillRoundRect(105, 340, 590, 34, 8, UI_SURFACE); gfx->setTextColor(UI_TEXT); gfx->setCursor(120, 352);
   gfx->print(cfg.ticker ? "Weergave: Infoscherm - 1 kanaal" : "Weergave: Meldingenlijst");
-  gfx->fillRoundRect(105, 345, 590, 38, 8, UI_SURFACE); gfx->setTextColor(cfg.sdLogging ? UI_AMBULANCE : UI_MUTED); gfx->setTextSize(1); gfx->setCursor(120, 359);
+  gfx->fillRoundRect(105, 380, 590, 34, 8, UI_SURFACE); gfx->setTextColor(cfg.sdLogging ? UI_AMBULANCE : UI_MUTED); gfx->setCursor(120, 392);
   gfx->print(cfg.sdLogging ? "SD-kaart logging: Aan" : "SD-kaart logging: Uit");
-  gfx->fillRoundRect(20, 400, 185, 65, 10, UI_SURFACE_2); gfx->drawRoundRect(20, 400, 185, 65, 10, UI_ACCENT);
-  gfx->setTextColor(UI_ACCENT); gfx->setTextSize(2); gfx->setCursor(65, 422); gfx->print("Terug");
-  gfx->fillRoundRect(220, 400, 230, 65, 10, UI_SURFACE_2); gfx->drawRoundRect(220, 400, 230, 65, 10, UI_FIRE);
-  gfx->setTextColor(UI_FIRE); gfx->setTextSize(1); gfx->setCursor(270, 427); gfx->print("Formatteer SD");
-  gfx->fillRoundRect(470, 400, 310, 65, 10, UI_ACCENT); gfx->setTextColor(UI_BG); gfx->setTextSize(2); gfx->setCursor(575, 422); gfx->print("Opslaan");
+  gfx->fillRoundRect(20, 425, 185, 45, 10, UI_SURFACE_2); gfx->drawRoundRect(20, 425, 185, 45, 10, UI_ACCENT);
+  gfx->setTextColor(UI_ACCENT); gfx->setTextSize(1); gfx->setCursor(90, 442); gfx->print("Terug");
+  gfx->fillRoundRect(220, 425, 230, 45, 10, UI_SURFACE_2); gfx->drawRoundRect(220, 425, 230, 45, 10, UI_FIRE);
+  gfx->setTextColor(UI_FIRE); gfx->setCursor(285, 442); gfx->print("Formatteer SD");
+  gfx->fillRoundRect(470, 425, 310, 45, 10, UI_ACCENT); gfx->setTextColor(UI_BG); gfx->setTextSize(1); gfx->setCursor(600, 442); gfx->print("Opslaan");
+}
+void drawServiceFilterScreen() {
+  invalidateMessageUi();
+  static const char *names[] = {"Brandweer", "Politie", "Ambulance", "Lifeliner / traumaheli", "Overig"};
+  gfx->fillScreen(UI_BG); gfx->setTextWrap(false);
+  gfx->fillRect(0, 0, 800, 70, UI_SURFACE); gfx->fillRect(0, 67, 800, 3, UI_ACCENT);
+  gfx->setTextColor(UI_TEXT); gfx->setTextSize(2); gfx->setCursor(20, 20); gfx->print("Dienstenfilter");
+  for (uint8_t i = 0; i < 5; ++i) {
+    int y = 85 + i * 62;
+    gfx->fillRoundRect(45, y, 710, 48, 9, UI_SURFACE);
+    gfx->fillRoundRect(60, y + 9, 30, 30, 6, cfg.services[i] ? UI_ACCENT : UI_SURFACE_2);
+    gfx->drawRoundRect(60, y + 9, 30, 30, 6, UI_ACCENT);
+    if (cfg.services[i]) { gfx->setTextColor(UI_BG); gfx->setTextSize(2); gfx->setCursor(68, y + 15); gfx->print("X"); }
+    gfx->setTextColor(cfg.services[i] ? UI_TEXT : UI_MUTED); gfx->setTextSize(2); gfx->setCursor(115, y + 15); gfx->print(names[i]);
+  }
+  gfx->fillRoundRect(45, 415, 710, 50, 9, UI_ACCENT); gfx->setTextColor(UI_BG); gfx->setTextSize(2); gfx->setCursor(345, 432); gfx->print("Gereed");
 }
 void drawSdFormatConfirmScreen() {
   invalidateMessageUi();
@@ -734,6 +784,13 @@ void handleTap(int x, int y) {
     } else if (y >= 265 && y <= 360) { screenMode = CONFIG; drawConfigScreen(); }
     return;
   }
+  if (screenMode == SERVICE_FILTER) {
+    if (y >= 85 && y < 395) {
+      uint8_t service = (y - 85) / 62;
+      if (service < 5) { cfg.services[service] = !cfg.services[service]; drawServiceFilterScreen(); }
+    } else if (y >= 415) { screenMode = CONFIG; drawConfigScreen(); }
+    return;
+  }
   if (y <= 65 && x >= 635) {
     wifiCandidateSsid = ""; manualWifiEntry = true; openWifiInput(""); return;
   }
@@ -742,11 +799,13 @@ void handleTap(int x, int y) {
     uint8_t slot = (y - 85) / 75;
     if (x < 100) { cycleRegion(slot, -1); drawConfigScreen(); }
     else if (x > 700) { cycleRegion(slot, 1); drawConfigScreen(); }
-  } else if (y >= 300 && y < 340) {
+  } else if (y >= 300 && y < 335) {
+    screenMode = SERVICE_FILTER; drawServiceFilterScreen();
+  } else if (y >= 340 && y < 375) {
     cfg.ticker = !cfg.ticker; drawConfigScreen();
-  } else if (y >= 345 && y < 390) {
+  } else if (y >= 380 && y < 415) {
     cfg.sdLogging = !cfg.sdLogging; drawConfigScreen();
-  } else if (y >= 400 && y <= 470) {
+  } else if (y >= 425 && y <= 470) {
     if (x >= 470) { saveSettings(); if (cfg.sdLogging) initSdCard(); screenMode = MESSAGES; drawScreen(); }
     else if (x >= 220) { screenMode = SD_FORMAT_CONFIRM; drawSdFormatConfirmScreen(); }
     else { screenMode = MESSAGES; drawScreen(); }
@@ -907,6 +966,11 @@ void startWeb() {
     cfg.regions[0]=server.arg("region1"); cfg.regions[1]=server.arg("region2"); cfg.regions[2]=server.arg("region3");
     cfg.capcodes=server.arg("capcodes"); cfg.ticker = server.arg("display") == "ticker";
     cfg.sdLogging = server.arg("sdlog") == "on";
+    cfg.services[FILTER_FIRE] = server.hasArg("fire");
+    cfg.services[FILTER_POLICE] = server.hasArg("police");
+    cfg.services[FILTER_AMBULANCE] = server.hasArg("ambulance");
+    cfg.services[FILTER_HELICOPTER] = server.hasArg("helicopter");
+    cfg.services[FILTER_OTHER] = server.hasArg("other");
     String pass=server.arg("password"); if(pass.length()) cfg.password=pass;
     long requestedInterval = server.arg("interval").toInt();
     cfg.intervalSec = requestedInterval < 15 ? 15 : (uint32_t)requestedInterval;

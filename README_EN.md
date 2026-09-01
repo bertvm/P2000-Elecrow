@@ -38,6 +38,8 @@ Use **Scan WiFi** to search for a network, or **Manual** to enter the SSID and p
 
 The display mode can be switched between the alert list and the single-alert information screen. In information mode, swipe left or right to move between alerts. The selected alert remains visible after a refresh and changes automatically only when a new alert arrives.
 
+Open **Service filter** in the configuration screen to independently enable or disable Fire brigade, Police, Ambulance, Lifeliner/trauma helicopter and other alerts. The same filters are available in the web configuration and persist after a restart.
+
 When SD-card logging is enabled, new alerts are appended to `/p2000.csv`. **Format SD** erases the card after an additional confirmation and creates a FAT filesystem suitable for logging.
 
 The GT911 touch controller uses GPIO19 for SDA and GPIO20 for SCL.
