@@ -9,7 +9,7 @@ De firmware opent vier tegels: **Meldingen**, **Weergave**, **WiFi** en **SD-kaa
 
 Wijzigingen worden als concept bewaard en pas na **Opslaan** toegepast. Terug navigeert naar het bovenliggende menu. Annuleren of het startmenu verlaten waarschuwt bij niet-opgeslagen wijzigingen. Formatteren is een afzonderlijke, onomkeerbare actie na bevestiging; Annuleren kan een format niet terugdraaien.
 
-De interface wordt rechtstreeks met Arduino_GFX getekend in `include/config_ui.h`. De bestaande SquareLine-bestanden bevatten nog de oude configuratiepagina en zijn **geen export van dit nieuwe menu**.
+De interface wordt rechtstreeks met Arduino_GFX getekend in `include/config_ui.h`. De bestanden `squareline/P2000.spj` en `squareline/P2000.sll` bevatten nu het bijgewerkte bewerkbare ontwerp. Het zijn geen functionele exports: navigatie en instellingenlogica blijven in de firmware geïmplementeerd.
 
 ## Testen na upload
 

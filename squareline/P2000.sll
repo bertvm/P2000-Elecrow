@@ -1,5 +1,5 @@
 {
-  "name": "SquareLine_Project.spj",
+  "name": "P2000.spj",
   "depth": 1,
   "width": 800,
   "height": 480,
@@ -8,7 +8,7 @@
   "offset_y": 0,
   "shape": "RECTANGLE",
   "multilang": "DISABLE",
-  "description": "P2000 meldingenlijst en configuratie voor Elecrow DIS07050H",
+  "description": "P2000 - tegelconfiguratie, diensten, WiFi en SD-archief (firmware 7df4d6b)",
   "board": "DIS07050H - ESP32 5inch HMI Display 800x480 RGB - ESP-IDF",
   "board_version": "v1.0.0",
   "editor_version": "1.6.2",
@@ -41,5 +41,5 @@
   "naming_add_subcomponent": false,
   "nidcnt": 1000206,
   "BitDepth": 16,
-  "Name": "SquareLine_Project"
+  "Name": "P2000"
 }

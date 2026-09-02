@@ -10,6 +10,7 @@
 #include <WebServer.h>
 #include <Arduino_GFX_Library.h>
 #include "FreeSansBold10pt7b.h"
+#include <PNGdec.h>
 
 // Elecrow DIS07050H / CrowPanel ESP32-S3 5 inch (800x480 RGB) pinout.
 #define GFX_BL  2
@@ -64,7 +65,7 @@ bool apiConnected = false;
 bool apiChecked = false;
 bool sdReady = false;
 bool configurationMode = false;
-enum ScreenMode { MESSAGES, CONFIG, SERVICE_FILTER, WIFI_SCAN, WIFI_INPUT, SD_FORMAT_CONFIRM };
+enum ScreenMode { MESSAGES, CONFIG, SERVICE_FILTER, WIFI_SCAN, WIFI_INPUT, SD_FORMAT_CONFIRM, MAP_DETAIL };
 ScreenMode screenMode = MESSAGES;
 constexpr uint8_t MAX_WIFI_NETWORKS = 8;
 String scannedWifiSsids[MAX_WIFI_NETWORKS];
@@ -739,6 +740,7 @@ void drawScreen() {
 
 
 #include "config_ui.h"
+#include "map_detail.h"
 void drawServiceFilterScreen() {
   invalidateMessageUi();
   static const char *names[] = {"Brandweer", "Politie", "Ambulance", "Lifeliner / traumaheli", "Overig"};
@@ -875,8 +877,21 @@ void cycleRegion(uint8_t slot, int direction) {
   cfg.regions[slot] = REGIONS[index].id;
 }
 void handleTap(int x, int y) {
+  if (screenMode == MAP_DETAIL) {
+    if (y <= 70) { screenMode = MESSAGES; invalidateMessageUi(); drawScreen(); }
+    return;
+  }
   if (screenMode == MESSAGES) {
     if (x >= 645 && x <= 785 && y <= 65) beginConfig();
+    else if (!cfg.ticker && y >= 108 && y < 418 && (y - 108) % 160 < 150) {
+      uint8_t visible = (y - 108) / 160;
+      if (visible < VISIBLE_ALARM_CARDS) {
+        uint8_t index = (archiveMode ? archiveFirstVisible : firstVisibleAlarm) + visible;
+        Alarm *source = archiveMode ? archiveAlarms : alarms;
+        uint8_t count = archiveMode ? archiveAlarmCount : alarmCount;
+        if (index < count) openMapDetail(source[index]);
+      }
+    } else if (cfg.ticker && alarmCount && infoAlarmIndex < alarmCount && y >= 100 && y < 430) openMapDetail(alarms[infoAlarmIndex]);
     return;
   }
   if (screenMode == WIFI_SCAN) {
