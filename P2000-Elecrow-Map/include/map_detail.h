@@ -9,7 +9,114 @@ int mapTileOriginX=0,mapTileOriginY=0; uint16_t mapLine[256];
 String mapUrlEncode(const String &value){const char hex[]="0123456789ABCDEF";String out;for(size_t i=0;i<value.length();++i){uint8_t c=value[i];if(isalnum(c)||c=='-'||c=='_'||c=='.')out+=(char)c;else if(c==' ')out+='+';else{out+='%';out+=hex[c>>4];out+=hex[c&15];}}return out;}
 bool readGeocodeCache(const String &key,double &lat,double &lon){if(!sdReady||!SD.exists("/geocache.tsv"))return false;File f=SD.open("/geocache.tsv",FILE_READ);while(f&&f.available()){String line=f.readStringUntil('\n');int a=line.indexOf('\t'),b=a<0?-1:line.indexOf('\t',a+1);if(a>0&&b>a&&line.substring(0,a)==key){lat=line.substring(a+1,b).toDouble();lon=line.substring(b+1).toDouble();f.close();return true;}}if(f)f.close();return false;}
 void saveGeocodeCache(const String &key,double lat,double lon){if(!sdReady)return;File f=SD.open("/geocache.tsv",FILE_APPEND);if(f){f.printf("%s\t%.7f\t%.7f\n",key.c_str(),lat,lon);f.close();}}
-bool geocodeAlarm(const Alarm &a,double &lat,double &lon,String &query){query=a.text;query.replace("\r"," ");query.replace("\n"," ");if(query.length()>150)query=query.substring(0,150);query+=" "+(a.place.length()?a.place:a.region)+" Nederland";while(query.indexOf("  ")>=0)query.replace("  "," ");query.trim();String key=mapUrlEncode(query);if(readGeocodeCache(key,lat,lon))return true;if(WiFi.status()!=WL_CONNECTED)return false;static unsigned long last=0;unsigned long elapsed=millis()-last;if(elapsed<1100)delay(1100-elapsed);last=millis();WiFiClientSecure secure;secure.setInsecure();HTTPClient http;http.setConnectTimeout(12000);http.setTimeout(15000);String url="https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=nl&q="+key;if(!http.begin(secure,url))return false;http.addHeader("User-Agent",MAP_USER_AGENT);http.addHeader("Accept-Language","nl");int code=http.GET();if(code!=HTTP_CODE_OK){Serial.printf("Geocoding fout %d\n",code);http.end();return false;}JsonDocument doc;auto error=deserializeJson(doc,http.getString());http.end();if(error||!doc.is<JsonArray>()||doc.as<JsonArray>().size()==0)return false;String la=doc[0]["lat"]|"",lo=doc[0]["lon"]|"";lat=la.toDouble();lon=lo.toDouble();if(lat==0&&lon==0)return false;saveGeocodeCache(key,lat,lon);return true;}
+bool allDigits(const String &s) {
+  if (!s.length()) return false;
+  for (char c : s) if (c < '0' || c > '9') return false;
+  return true;
+}
+bool allLetters(const String &s) {
+  if (!s.length()) return false;
+  for (char c : s) if (!isalpha((uint8_t)c)) return false;
+  return true;
+}
+String locationToken(String token) {
+  String clean;
+  for (char c : token)
+    if (isalnum((uint8_t)c) || c == '-' || c == '\'' ) clean += c;
+  return clean;
+}
+bool streetWord(const String &word) {
+  String lower = word; lower.toLowerCase();
+  const char *suffixes[] = {"straat","weg","laan","plein","gracht","kade","dijk","singel",
+                            "steeg","hof","pad","park","boulevard","markt","dreef","wal","erf"};
+  for (const char *suffix : suffixes) if (lower.endsWith(suffix)) return true;
+  return false;
+}
+bool requestGeocode(String candidate, double &lat, double &lon) {
+  while (candidate.indexOf("  ") >= 0) candidate.replace("  ", " ");
+  candidate.trim();
+  if (!candidate.length()) return false;
+  String key = mapUrlEncode(candidate);
+  if (readGeocodeCache(key, lat, lon)) return true;
+  if (WiFi.status() != WL_CONNECTED) return false;
+  static unsigned long lastRequest = 0;
+  unsigned long elapsed = millis() - lastRequest;
+  if (elapsed < 1100) delay(1100 - elapsed);
+  lastRequest = millis();
+  WiFiClientSecure secure; secure.setInsecure();
+  HTTPClient http; http.setConnectTimeout(12000); http.setTimeout(15000);
+  String url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=nl&q=" + key;
+  if (!http.begin(secure, url)) return false;
+  http.addHeader("User-Agent", MAP_USER_AGENT); http.addHeader("Accept-Language", "nl");
+  int code = http.GET();
+  if (code != HTTP_CODE_OK) { Serial.printf("Geocoding fout %d\n", code); http.end(); return false; }
+  JsonDocument doc; auto error = deserializeJson(doc, http.getString()); http.end();
+  if (error || !doc.is<JsonArray>() || doc.as<JsonArray>().size() == 0) return false;
+  String latitude = doc[0]["lat"] | "", longitude = doc[0]["lon"] | "";
+  lat = latitude.toDouble(); lon = longitude.toDouble();
+  if (lat == 0 && lon == 0) return false;
+  saveGeocodeCache(key, lat, lon); return true;
+}
+bool geocodeAlarm(const Alarm &a, double &lat, double &lon, String &query) {
+  String raw = a.text; raw.replace("\r", " "); raw.replace("\n", " ");
+  raw.replace(",", " "); raw.replace(";", " "); raw.replace("(", " "); raw.replace(")", " ");
+  String tokens[48]; uint8_t count = 0;
+  int start = 0;
+  while (start < raw.length() && count < 48) {
+    while (start < raw.length() && raw[start] == ' ') ++start;
+    int end = raw.indexOf(' ', start); if (end < 0) end = raw.length();
+    String token = locationToken(raw.substring(start, end));
+    if (token.length()) tokens[count++] = token;
+    start = end + 1;
+  }
+
+  String postcode, houseNumber, street;
+  int postcodeIndex = -1;
+  for (uint8_t i = 0; i < count; ++i) {
+    String upper = tokens[i]; upper.toUpperCase();
+    if (upper.length() == 6 && allDigits(upper.substring(0,4)) && upper[0] != '0' && allLetters(upper.substring(4))) {
+      postcode = upper.substring(0,4) + " " + upper.substring(4); postcodeIndex = i; break;
+    }
+    if (upper.length() == 4 && allDigits(upper) && upper[0] != '0' && i + 1 < count) {
+      String letters = tokens[i+1]; letters.toUpperCase();
+      if (letters.length() == 2 && allLetters(letters)) {
+        postcode = upper + " " + letters; postcodeIndex = i; break;
+      }
+    }
+  }
+  if (postcodeIndex >= 0) {
+    for (int distance = 1; distance <= 6 && !houseNumber.length(); ++distance) {
+      int indices[] = {postcodeIndex - distance, postcodeIndex + distance};
+      for (int index : indices) if (index >= 0 && index < count) {
+        String token = tokens[index];
+        if (token.length() <= 7 && isdigit((uint8_t)token[0]) && token != postcode.substring(0,4)) {
+          bool plausible = true;
+          for (char c : token) if (!isalnum((uint8_t)c) && c != '-') plausible = false;
+          if (plausible) { houseNumber = token; break; }
+        }
+      }
+    }
+  }
+  for (uint8_t i = 0; i < count && !street.length(); ++i) if (streetWord(tokens[i])) {
+    int first = max(0, (int)i - 2);
+    for (int j = first; j <= i; ++j) { if (street.length()) street += ' '; street += tokens[j]; }
+    if (!houseNumber.length() && i + 1 < count && isdigit((uint8_t)tokens[i+1][0])) houseNumber = tokens[i+1];
+  }
+
+  String place = a.place.length() ? a.place : a.region;
+  String candidates[5]; uint8_t candidateCount = 0;
+  if (street.length() && postcode.length()) candidates[candidateCount++] = street + " " + houseNumber + " " + postcode + " " + place + " Nederland";
+  if (postcode.length() && houseNumber.length()) candidates[candidateCount++] = postcode + " " + houseNumber + " Nederland";
+  if (postcode.length()) candidates[candidateCount++] = postcode + " " + place + " Nederland";
+  if (street.length()) candidates[candidateCount++] = street + " " + houseNumber + " " + place + " Nederland";
+  if (place.length()) candidates[candidateCount++] = place + " Nederland";
+  for (uint8_t i = 0; i < candidateCount; ++i) {
+    if (i && candidates[i] == candidates[i-1]) continue;
+    Serial.println("Locatie zoeken: " + candidates[i]);
+    if (requestGeocode(candidates[i], lat, lon)) { query = candidates[i]; return true; }
+  }
+  return false;
+}
 
 void *mapPngOpen(const char *name,int32_t *size){mapPngFile=SD.open(name,FILE_READ);if(!mapPngFile)return nullptr;*size=mapPngFile.size();return &mapPngFile;}
 void mapPngClose(void *){if(mapPngFile)mapPngFile.close();}

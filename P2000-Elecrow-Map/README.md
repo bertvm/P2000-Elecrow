@@ -5,12 +5,14 @@ Afzonderlijk PlatformIO-project voor het Elecrow ESP32-S3 5-inch display. Na het
 ## Werking
 
 1. Tik op een meldingskaart, of op de melding in het infoscherm.
-2. De firmware combineert meldingstekst, plaats/regio en Nederland tot een zoekopdracht.
-3. Nominatim zet deze gebruikersgestuurde zoekopdracht om naar coördinaten.
+2. De firmware zoekt eerst een Nederlandse postcode, huisnummer en herkenbare straatnaam in de meldingstekst.
+3. Nominatim zet de best beschikbare, gebruikersgestuurde zoekopdracht om naar coördinaten.
 4. De ESP32 laadt uitsluitend de negen kaarttegels rondom het gevonden punt en tekent een marker.
 5. Tik linksboven op **Terug** om naar de meldingen te gaan.
 
 Een FAT-geformatteerde SD-kaart is verplicht. Geocoderingen staan in `/geocache.tsv`; kaarttegels in `/maptiles`. Bestaande resultaten worden hergebruikt.
+
+De zoekvolgorde is: straat + huisnummer + postcode, postcode + huisnummer, postcode + plaats, straat + plaats en ten slotte alleen de plaats. Elke volgende poging vindt pas na minimaal 1,1 seconde plaats. De gebruikte zoekopdracht wordt op de seriële monitor getoond.
 
 ## Bouwen en uploaden
 
