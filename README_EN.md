@@ -10,6 +10,16 @@ The screen uses a dark SquareLine-inspired design rendered directly with Arduino
 
 To reduce visible flicker, the renderer tracks the contents of the header, each alert card and the footer. An unchanged API response causes no redraw; when data changes, only the affected area is refreshed. A full redraw occurs only when switching screens.
 
+## OpenStreetMap map edition
+
+The separate [`P2000-Elecrow-Map`](P2000-Elecrow-Map/) directory contains the map-enabled firmware. Tap an alert to open a detail page containing the complete message, the detected location and an OpenStreetMap view. A marker identifies the resolved location, and the back button returns to the alert list.
+
+![OpenStreetMap detail view](docs/map-layout.svg)
+
+The location parser prioritises a complete street address with house number, postcode and city. If the message contains only partial details, the firmware tries postcode with house number, postcode with city, street with city and finally the city alone. Geocoding starts only after the user taps an alert. Results and map tiles are cached on the microSD card in `/geocache.tsv` and `/maptiles`, making previously opened locations faster while reducing API requests.
+
+Open the map directory as a standalone PlatformIO project and build or upload the `elecrow_esp32s3_5in_map` environment. A working internet connection and a FAT32-formatted microSD card are recommended. Map data is provided by OpenStreetMap and the required attribution is shown inside the map view.
+
 ## Build and flash
 
 1. Open this repository in Visual Studio Code with PlatformIO.

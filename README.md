@@ -10,6 +10,16 @@ De schermweergave gebruikt de donkere SquareLine-ontwerpstijl rechtstreeks via A
 
 Om zichtbaar flikkeren te beperken bewaart de renderer een inhoudssignatuur per bovenbalk, meldingskaart en voettekst. Een ongewijzigde API-response veroorzaakt geen tekenactie; bij veranderingen wordt alleen het betreffende schermvlak vernieuwd. Een volledig scherm wordt uitsluitend bij een echte schermwissel opnieuw opgebouwd.
 
+## OpenStreetMap-kaartversie
+
+De aparte map [`P2000-Elecrow-Map`](P2000-Elecrow-Map/) bevat de kaartversie van de firmware. Tik op een melding om een detailpagina te openen met de volledige melding, de gevonden locatie en een kaart van OpenStreetMap. Een marker geeft de herkende locatie aan; met de terugknop keer je terug naar de meldingenlijst.
+
+![OpenStreetMap-detailweergave](docs/map-layout.svg)
+
+De locatiezoeker geeft voorrang aan een volledig adres met huisnummer, postcode en plaats. Als niet alle gegevens in de meldtekst staan, probeert de firmware achtereenvolgens postcode met huisnummer, postcode met plaats, straat met plaats en ten slotte alleen de plaats. Geocoding wordt pas uitgevoerd nadat de gebruiker op een melding tikt. Zoekresultaten en kaarttegels worden op de microSD-kaart opgeslagen in `/geocache.tsv` en `/maptiles`, zodat eerder geopende locaties sneller en met minder API-aanvragen worden getoond.
+
+Open de kaartmap als zelfstandig PlatformIO-project en bouw of flash de omgeving `elecrow_esp32s3_5in_map`. Voor de kaartweergave zijn een werkende internetverbinding en een FAT32-geformatteerde microSD-kaart aanbevolen. De kaartgegevens zijn afkomstig van OpenStreetMap; de vereiste bronvermelding wordt in het kaartvlak weergegeven.
+
 ## Bouwen en flashen
 
 1. Open deze map met PlatformIO in VS Code.
