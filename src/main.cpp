@@ -8,8 +8,10 @@
 #include <Wire.h>
 #include <ArduinoJson.h>
 #include <WebServer.h>
+#include <StreamUtils.h>
 #include <Arduino_GFX_Library.h>
 #include "FreeSansBold10pt7b.h"
+#include "bounded_json.h"
 
 // Elecrow DIS07050H / CrowPanel ESP32-S3 5 inch (800x480 RGB) pinout.
 #define GFX_BL  2
@@ -556,16 +558,18 @@ bool matchesFilters(JsonObject item) {
 bool serviceMatches(const Alarm &alarm) {
   return cfg.services[serviceFilterIndex(serviceIcon(alarm))];
 }
-void readAlarms(const String &body) {
-  JsonDocument doc; DeserializationError err = deserializeJson(doc, body);
-  if (err) { statusLine = "API geeft geen geldige JSON"; return; }
+bool readAlarms(Stream &body) {
+  BoundedJsonAllocator allocator(96 * 1024);
+  JsonDocument doc(&allocator);
+  DeserializationError err = deserializeJson(doc, body);
+  if (err) { statusLine = String("API JSON: ") + err.c_str(); return false; }
   JsonArray list;
   if (doc.is<JsonArray>()) list = doc.as<JsonArray>();
   else if (doc["meldingen"].is<JsonArray>()) list = doc["meldingen"].as<JsonArray>();
   else if (doc["messages"].is<JsonArray>()) list = doc["messages"].as<JsonArray>();
   else if (doc["results"].is<JsonArray>()) list = doc["results"].as<JsonArray>();
   else if (doc["data"].is<JsonArray>()) list = doc["data"].as<JsonArray>();
-  else { statusLine = "JSON bevat geen berichtenlijst"; return; }
+  else { statusLine = "JSON bevat geen berichtenlijst"; return false; }
   String currentlyShownId = (alarmCount && infoAlarmIndex < alarmCount) ? alarms[infoAlarmIndex].id : "";
   String previousIds[MAX_ALARMS];
   uint8_t previousCount = alarmCount;
@@ -604,6 +608,8 @@ void readAlarms(const String &body) {
     }
     newestInfoId = alarms[0].id;
   } else firstVisibleAlarm = 0;
+  if (infoAlarmIndex >= alarmCount) infoAlarmIndex = 0;
+  return true;
 }
 
 void drawWrapped(const String &s, int x, int &y, int maxWidth, int lineHeight, int charWidth) {
@@ -1053,36 +1059,43 @@ void pollApi() {
   if (WiFi.status() != WL_CONNECTED || !cfg.apiUrl.length()) return;
   // Alarmeringdroid /api2/find returns the latest batch. Filters are applied
   // locally in readAlarms(), preserving its documented response shape.
-  String url = cfg.apiUrl;
-  IPAddress apiIp;
-  if (url.indexOf("beta.alarmeringdroid.nl") >= 0 && WiFi.hostByName("beta.alarmeringdroid.nl", apiIp) != 1) {
-    apiChecked = true; apiConnected = false;
-    statusLine = "API: DNS-fout"; Serial.println("DNS-fout: beta.alarmeringdroid.nl");
-    nextPoll = millis() + 10000; if (screenMode == MESSAGES) drawScreen(); return;
-  }
-  Serial.printf("API ophalen; IP=%s RSSI=%d server=%s URL=%s\n", WiFi.localIP().toString().c_str(), WiFi.RSSI(), apiIp.toString().c_str(), url.c_str());
-  HTTPClient http; WiFiClientSecure secure; int code;
-  http.setConnectTimeout(15000); http.setTimeout(20000);
-  if (url.startsWith("https://")) {
-    secure.setInsecure(); secure.setTimeout(15000);
-    code = http.begin(secure, url) ? http.GET() : HTTPC_ERROR_CONNECTION_REFUSED;
-  } else code = http.begin(url) ? http.GET() : HTTPC_ERROR_CONNECTION_REFUSED;
+  const String &url = cfg.apiUrl;
+  bool https = url.startsWith("https://");
+  Serial.printf("API ophalen; IP=%s RSSI=%d heap=%u URL=%s\n",
+                WiFi.localIP().toString().c_str(), WiFi.RSSI(), ESP.getFreeHeap(), url.c_str());
+  HTTPClient http; WiFiClientSecure secure; WiFiClient plain;
+  // Socket/TLS setters use seconds; HTTPClient and Stream use milliseconds.
+  secure.setInsecure(); secure.setTimeout(8); secure.setHandshakeTimeout(12);
+  plain.setTimeout(8);
+  http.setConnectTimeout(8000); http.setTimeout(8000);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setUserAgent("P2000-Elecrow/2.0.1");
+  const char *headers[] = {"Transfer-Encoding"};
+  http.collectHeaders(headers, 1);
+  bool started = https ? http.begin(secure, url) : http.begin(plain, url);
+  int code = started ? http.GET() : HTTPC_ERROR_CONNECTION_REFUSED;
   apiChecked = true;
-  apiConnected = code == HTTP_CODE_OK;
-  if (code == HTTP_CODE_OK) readAlarms(http.getString());
-  else {
+  apiConnected = false;
+  if (code == HTTP_CODE_OK) {
+    Stream &raw = http.getStream(); raw.setTimeout(8000);
+    ChunkDecodingStream decoded(raw); decoded.setTimeout(8000);
+    Stream &body = http.header("Transfer-Encoding").equalsIgnoreCase("chunked")
+                       ? static_cast<Stream&>(decoded) : raw;
+    apiConnected = readAlarms(body);
+  } else {
     statusLine = "API: " + HTTPClient::errorToString(code);
     Serial.printf("API fout %d: %s\n", code, HTTPClient::errorToString(code).c_str());
-    nextPoll = millis() + 10000; // network may just be reconnecting
+    nextPoll = millis() + 10000;
   }
   http.end(); if (screenMode == MESSAGES) drawScreen();
 }
 
 void connectWifi() {
+  if (!cfg.ssid.length()) return;
   WiFi.mode(WIFI_STA);
-  IPAddress dns1(1, 1, 1, 1), dns2(8, 8, 8, 8);
-  // Some routers advertise a DNS server that does not answer ESP32 requests.
-  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, dns1, dns2);
+  // Use the router's DHCP address, gateway and DNS. Public DNS can be blocked
+  // on a LAN and should not replace the network's supplied configuration.
+  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
   WiFi.setSleep(false);             // prevents missed packets on some S3 RGB boards
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.setAutoReconnect(true);

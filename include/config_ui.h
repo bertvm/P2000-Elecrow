@@ -82,7 +82,7 @@ void drawConfigScreen() {
     configButton(24,300,364,60,"Alles wissen"); configButton(412,300,364,60,"Gereed");
   } else if(configPage==DISPLAY_PAGE) {
     configButton(24,100,364,140,"Meldingenlijst",!configDraft.ticker);
-    configText("Drie meldingen tegelijk",42,175);
+    configText("Twee meldingen tegelijk",42,175);
     configButton(412,100,364,140,"Infoscherm",configDraft.ticker);
     configText("Een melding met meer detail",430,175);
     configText("Verversingsinterval (seconden)",24,275);
