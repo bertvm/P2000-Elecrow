@@ -10,6 +10,14 @@ The screen uses a dark SquareLine-inspired design rendered directly with Arduino
 
 To reduce visible flicker, the renderer tracks the contents of the header, each alert card and the footer. An unchanged API response causes no redraw; when data changes, only the affected area is refreshed. A full redraw occurs only when switching screens.
 
+## Additional device: Cheap Yellow Display (CYD)
+
+The app also runs on the **ESP32-2432S032 with ESP32-WROOM and a 320×240 ST7789 display**. Open [`P2000-CYD`](P2000-CYD/) as a standalone PlatformIO project. The capacitive **C variant (GT911)** is hardware-tested and selected by default; the resistive **R variant (XPT2046)** is build-tested only.
+
+The CYD version includes alerts, details, filters, touchscreen and web settings, Wi-Fi scanning and an SD archive. It includes the 180-degree touch rotation and firmware 1.0.1 Wi-Fi/API fixes. See the [build and upload instructions (Dutch)](P2000-CYD/README.md) and [hardware pinout](P2000-CYD/docs/hardware.md). The OpenStreetMap extension remains specific to the separate Elecrow map edition.
+
+From the `P2000-CYD` directory, run `pio run -e cyd_2432s032c -t upload` and `pio device monitor --baud 115200`. Use `cyd_2432s032r` for resistive touch. On first boot, connect to `P2000-display`, open `http://192.168.77.1` and save Wi-Fi credentials and at least one region.
+
 ## OpenStreetMap map edition
 
 The separate [`P2000-Elecrow-Map`](P2000-Elecrow-Map/) directory contains the map-enabled firmware. Tap an alert to open a detail page containing the complete message, the detected location and an OpenStreetMap view. A marker identifies the resolved location, and the back button returns to the alert list.

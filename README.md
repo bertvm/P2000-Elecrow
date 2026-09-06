@@ -10,6 +10,12 @@ De schermweergave gebruikt de donkere SquareLine-ontwerpstijl rechtstreeks via A
 
 Om zichtbaar flikkeren te beperken bewaart de renderer een inhoudssignatuur per bovenbalk, meldingskaart en voettekst. Een ongewijzigde API-response veroorzaakt geen tekenactie; bij veranderingen wordt alleen het betreffende schermvlak vernieuwd. Een volledig scherm wordt uitsluitend bij een echte schermwissel opnieuw opgebouwd.
 
+## Extra apparaat: Cheap Yellow Display (CYD)
+
+De app draait ook op de **ESP32-2432S032 met ESP32-WROOM en ST7789-scherm (320×240)**. Open [`P2000-CYD`](P2000-CYD/) als zelfstandig PlatformIO-project. De capacitieve **C-variant (GT911)** is op hardware getest en standaard geselecteerd; de resistieve **R-variant (XPT2046)** is bouwgetest.
+
+De CYD-versie bevat meldingen, detailweergave, filters, touch- en webconfiguratie, wifi-scan en SD-archief. Touch is 180 graden gedraaid en de wifi/API-correctie 1.0.1 is inbegrepen. Zie de [bouw- en flashinstructies](P2000-CYD/README.md) en [hardwarepinnen](P2000-CYD/docs/hardware.md). De OpenStreetMap-uitbreiding is alleen beschikbaar in de aparte Elecrow-kaartversie.
+
 ## OpenStreetMap-kaartversie
 
 De aparte map [`P2000-Elecrow-Map`](P2000-Elecrow-Map/) bevat de kaartversie van de firmware. Tik op een melding om een detailpagina te openen met de volledige melding, de gevonden locatie en een kaart van OpenStreetMap. Een marker geeft de herkende locatie aan; met de terugknop keer je terug naar de meldingenlijst.
