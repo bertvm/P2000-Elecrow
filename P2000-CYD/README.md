@@ -4,7 +4,7 @@ Zelfstandige port van het ESP32-P2000-display naar de **ESP32-2432S032 met ESP32
 
 ## Functies
 
-- Dezelfde Alarmeringdroid-API: `https://beta.alarmeringdroid.nl/api2/find/`.
+- Dezelfde Alarmeringdroid-API, of een lokale [P2000-server](https://github.com/bertvm/P2000-server) via HTTP (`/api2/find/`) of MQTT (`p2000/alerts`).
 - Acht actuele meldingen in het geheugen, twee kaarten tegelijk op het scherm.
 - Tik op een kaart voor de volledige melding, regio, plaats en capcodes. De detailtekst heeft grotere letters; tik op het paginanummer voor de volgende tekstpagina.
 - Blader met **Nieuwer / Ouder** of veeg. De modus **Infoscherm** toont één melding tegelijk.

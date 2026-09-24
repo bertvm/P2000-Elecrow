@@ -31,15 +31,25 @@ Open de kaartmap als zelfstandig PlatformIO-project en bouw of flash de omgeving
 1. Open deze map met PlatformIO in VS Code.
 2. Sluit de ESP32-S3 met USB aan en kies **Upload**.
 3. Verbind na de eerste start met wifi-netwerk `P2000-display` en open `http://192.168.77.1`.
-4. Sla wifi, regio en capcodes op. De API-URL staat standaard op Alarmeringdroid. Daarna is de pagina bereikbaar op het IP-adres dat de router aan de ESP32 geeft.
+4. Sla wifi, regio en capcodes op. Kies bij **Bron** Alarmeringdroid, of je lokale [P2000-server](https://github.com/bertvm/P2000-server) via HTTP of MQTT. Daarna is de pagina bereikbaar op het IP-adres dat de router aan de ESP32 geeft.
 
-## Alarmeringdroid-API
+## Alarmeringdroid-API en lokale P2000-server
 
-Standaard gebruikt de firmware:
+Standaard gebruikt de firmware de clouddienst:
 
 ```
 https://beta.alarmeringdroid.nl/api2/find/
 ```
+
+Draait [P2000-server](https://github.com/bertvm/P2000-server) op een Raspberry Pi in het LAN, dan stel je in Config → Meldingen → **Bron** in:
+
+| Bron | Wat de display doet |
+| --- | --- |
+| Alarmeringdroid | HTTPS-poll van de internet-API (of een andere URL via de webpagina) |
+| Lokale API | HTTP-poll van `http://<pi-ip>:8080/api2/find/` (zelfde `meldingen`-formaat) |
+| MQTT | Abonneert op `p2000/alerts` (schema 1) en toont nieuwe meldingen direct |
+
+Regio-, dienst- en capcodefilters blijven op de ESP32. MQTT gebruikt standaard poort 1883 zonder login, passend bij de Mosquitto-container van P2000-server.
 
 De endpoint retourneert een object met een array `meldingen`. Er zijn drie regiofilters; een melding wordt getoond wanneer zijn `regioid` met minstens één geselecteerde regio overeenkomt. De optie **Geen** schakelt alleen die keuze uit. Staan alle drie op **Geen**, dan toont het scherm geen meldingen. Capcodes worden vergeleken met de `capcodes`-array van iedere melding.
 

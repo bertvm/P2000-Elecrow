@@ -23,7 +23,7 @@ pio run -e elecrow_esp32s3_5in_map
 pio run -e elecrow_esp32s3_5in_map -t upload
 ```
 
-Het project gebruikt Arduino_GFX 1.6.0, ArduinoJson 7 en PNGdec. De eerste kaart kan langer duren doordat PNG-tegels via HTTPS worden geladen. Een eerder bekeken gebied komt vanaf SD.
+Het project gebruikt Arduino_GFX 1.6.0, ArduinoJson 7, StreamUtils, PubSubClient en PNGdec. Dezelfde bronkeuze als het basisproject (Alarmeringdroid, lokale P2000-server-API of MQTT) staat onder Config → Meldingen → Bron. De eerste kaart kan langer duren doordat PNG-tegels via HTTPS worden geladen. Een eerder bekeken gebied komt vanaf SD.
 
 ## Beperkingen
 

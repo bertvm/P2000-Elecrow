@@ -5,7 +5,7 @@
 enum Action { BACK, CONFIGURE, OPEN_PAGE, SAVE, CANCEL_EDIT, REGION_PICK, REGION_SET,
   REGION_PREV, REGION_NEXT, SERVICE, DISPLAY_MODE, INTERVAL, SD_TOGGLE,
   ARCHIVE, FORMAT_REQUEST, FORMAT_EXECUTE, SCAN, MANUAL, SSID_PICK,
-  EDIT_SSID, EDIT_PASS, EDIT_CAPS, KEY, ERASE, SHIFT, SYMBOLS, SPACE,
+  EDIT_SSID, EDIT_PASS, EDIT_CAPS, EDIT_HOST, EDIT_TOPIC, FEED_MODE, API_PORT, KEY, ERASE, SHIFT, SYMBOLS, SPACE,
   KEY_DONE, PREVIOUS, NEXT, DETAIL, DETAIL_PAGE, DISCARD, CALIBRATE };
 struct Button { int x,y,w,h; Action action; int value; };
 Button buttons[48]; uint8_t buttonCount = 0;
@@ -78,7 +78,11 @@ void configFooter() {
 bool configDirty() {
   if(configDraft.ssid!=cfg.ssid || configDraft.password!=cfg.password ||
      configDraft.capcodes!=cfg.capcodes || configDraft.ticker!=cfg.ticker ||
-     configDraft.sdLogging!=cfg.sdLogging || configDraft.intervalSec!=cfg.intervalSec) return true;
+     configDraft.sdLogging!=cfg.sdLogging || configDraft.intervalSec!=cfg.intervalSec ||
+     configDraft.feedMode!=cfg.feedMode || configDraft.serverHost!=cfg.serverHost ||
+     configDraft.apiPort!=cfg.apiPort || configDraft.mqttPort!=cfg.mqttPort ||
+     configDraft.mqttTopic!=cfg.mqttTopic || configDraft.mqttUser!=cfg.mqttUser ||
+     configDraft.mqttPass!=cfg.mqttPass) return true;
   for(int i=0;i<3;++i) if(configDraft.regions[i]!=cfg.regions[i]) return true;
   for(int i=0;i<5;++i) if(configDraft.services[i]!=cfg.services[i]) return true;
   return false;
@@ -96,7 +100,9 @@ void applyConfig() {
     if(cfg.ssid.length()) connectWifi(); else startConfigurationAp();
   }
   alarmCount=0; infoAlarmIndex=0; firstVisibleAlarm=0; archiveMode=false; detailOpen=false;
-  detailLine=0; nextPoll=0; invalidateMessageUi();
+  detailLine=0; nextPoll=0; nextMqttRetry=0;
+  if(cfg.feedMode!=FEED_MQTT && mqttClient.connected()) mqttClient.disconnect();
+  invalidateMessageUi();
   configNotice="Instellingen opgeslagen";
 }
 void drawConfigScreen() {
@@ -114,9 +120,10 @@ void drawConfigScreen() {
     label("ESP32-2432S032C | GT911",8,165,304,1,UI_MUTED);
 #endif
   } else if(configPage==ALERT_PAGE) {
-    button(4,40,100,28,"Regio's",OPEN_PAGE,100,alertTab==0);
-    button(110,40,100,28,"Diensten",OPEN_PAGE,101,alertTab==1);
-    button(216,40,100,28,"Capcodes",OPEN_PAGE,102,alertTab==2);
+    button(4,40,74,28,"Regio's",OPEN_PAGE,100,alertTab==0);
+    button(82,40,74,28,"Dienst",OPEN_PAGE,101,alertTab==1);
+    button(160,40,74,28,"Caps",OPEN_PAGE,102,alertTab==2);
+    button(238,40,78,28,"Bron",OPEN_PAGE,103,alertTab==3);
     if(alertTab==0) for(int i=0;i<3;++i)
       button(6,76+i*38,308,32,String(i+1)+": "+regionName(configDraft.regions[i]),REGION_PICK,i);
     if(alertTab==1) {
@@ -127,6 +134,21 @@ void drawConfigScreen() {
       button(6,82,308,40,configDraft.capcodes.length()?configDraft.capcodes:"Capcodes invoeren",EDIT_CAPS);
       label("Leeg: alle capcodes in gekozen regio's.",8,140,304,1,UI_MUTED);
       label("Meerdere codes scheiden met een komma.",8,156,304,1,UI_MUTED);
+    }
+    if(alertTab==3) {
+      button(6,76,100,32,"Cloud",FEED_MODE,FEED_CLOUD,configDraft.feedMode==FEED_CLOUD);
+      button(110,76,100,32,"Lok. API",FEED_MODE,FEED_LOCAL_API,configDraft.feedMode==FEED_LOCAL_API);
+      button(214,76,100,32,"MQTT",FEED_MODE,FEED_MQTT,configDraft.feedMode==FEED_MQTT);
+      button(6,114,308,32,configDraft.serverHost.length()?configDraft.serverHost:"Pi-IP invoeren",EDIT_HOST);
+      if(configDraft.feedMode==FEED_CLOUD) label("Internet: Alarmeringdroid-API",8,154,304,1,UI_MUTED);
+      else if(configDraft.feedMode==FEED_LOCAL_API) {
+        label("P2000-server /api2/find/",8,150,304,1,UI_MUTED);
+        button(6,166,70,28,"-10",API_PORT,-10);
+        label(String(configDraft.apiPort),124,174,80,1);
+        button(244,166,70,28,"+10",API_PORT,10);
+      } else {
+        button(6,152,308,32,"Topic: "+(configDraft.mqttTopic.length()?configDraft.mqttTopic:DEFAULT_MQTT_TOPIC),EDIT_TOPIC);
+      }
     }
   } else if(configPage==REGION_PAGE) {
     for(int i=0;i<4 && regionStart+i<REGION_COUNT;++i) {
@@ -214,10 +236,13 @@ void updateWifiScan() {
   if(found!=WIFI_SCAN_RUNNING) finishWifiScan(found);
 }
 String &editingValue() {
-  return editField==2?configDraft.capcodes:editField==0?configDraft.ssid:configDraft.password;
+  if(editField==2) return configDraft.capcodes;
+  if(editField==3) return configDraft.serverHost;
+  if(editField==4) return configDraft.mqttTopic;
+  return editField==0?configDraft.ssid:configDraft.password;
 }
 void drawWifiInputScreen() {
-  pageHeader(editField==2?"Capcodes":editField==0?"WiFi-naam":"WiFi-wachtwoord");
+  pageHeader(editField==2?"Capcodes":editField==3?"Lokale server":editField==4?"MQTT-topic":editField==0?"WiFi-naam":"WiFi-wachtwoord");
   String visible=editingValue();
   if(editField==1) {visible=""; for(unsigned i=0;i<editingValue().length();++i) visible+='*';}
   if(visible.length()>49) visible=visible.substring(visible.length()-49);
@@ -238,7 +263,7 @@ void drawWifiInputScreen() {
   button(163,209,154,28,editField==0?"Wachtwoord >":"Gereed",KEY_DONE,0,true);
 }
 void openWifiInput(int field) {
-  editField=field; keyboardSymbols=false; keyboardUppercase=false;
+  editField=field; keyboardSymbols=field==3; keyboardUppercase=false;
   screenMode=WIFI_INPUT; drawWifiInputScreen();
 }
 void drawSdFormatConfirmScreen() {
@@ -387,7 +412,7 @@ void handleAction(Action action,int value) {
     case CONFIGURE:beginConfig();return;
     case BACK:
       if(screenMode==MESSAGES) {detailOpen=false;detailLine=0;invalidateMessageUi();}
-      else if(screenMode!=CONFIG) {if(screenMode==WIFI_INPUT)configPage=editField==2?ALERT_PAGE:WIFI_PAGE;screenMode=CONFIG;}
+      else if(screenMode!=CONFIG) {if(screenMode==WIFI_INPUT){configPage=editField==2||editField>=3?ALERT_PAGE:WIFI_PAGE;if(editField>=3)alertTab=3;}screenMode=CONFIG;}
       else if(configPage==HOME_PAGE) {if(configDirty())configPage=LEAVE_PAGE;else screenMode=MESSAGES;}
       else configPage=configPage==REGION_PAGE?ALERT_PAGE:HOME_PAGE;
       break;
@@ -401,6 +426,8 @@ void handleAction(Action action,int value) {
     case REGION_PREV:if(screenMode==WIFI_SCAN)wifiPage=max(0,wifiPage-4);else regionStart=regionStart>=4?regionStart-4:0;break;
     case REGION_NEXT:if(screenMode==WIFI_SCAN){if(wifiPage+4<scannedWifiCount)wifiPage+=4;}else if(regionStart+4<REGION_COUNT)regionStart+=4;break;
     case SERVICE:configDraft.services[value]=!configDraft.services[value];break;
+    case FEED_MODE:configDraft.feedMode=(uint8_t)value;break;
+    case API_PORT:configDraft.apiPort=constrain((int)configDraft.apiPort+value,1,65535);break;
     case DISPLAY_MODE:configDraft.ticker=value;break;
     case INTERVAL:configDraft.intervalSec=constrain((int)configDraft.intervalSec+value,15,3600);break;
     case SD_TOGGLE:configDraft.sdLogging=!configDraft.sdLogging;break;
@@ -416,12 +443,18 @@ void handleAction(Action action,int value) {
     case EDIT_SSID:openWifiInput(0);return;
     case EDIT_PASS:openWifiInput(1);return;
     case EDIT_CAPS:openWifiInput(2);return;
-    case KEY:if(editingValue().length()<(editField==2?256U:editField==0?32U:63U))editingValue()+=char(value);break;
-    case SPACE:if(editingValue().length()<(editField==2?256U:editField==0?32U:63U))editingValue()+=' ';break;
+    case EDIT_HOST:openWifiInput(3);return;
+    case EDIT_TOPIC:openWifiInput(4);return;
+    case KEY:if(editingValue().length()<(editField==2?256U:editField>=3?48U:editField==0?32U:63U))editingValue()+=char(value);break;
+    case SPACE:if(editingValue().length()<(editField==2?256U:editField>=3?48U:editField==0?32U:63U))editingValue()+=' ';break;
     case ERASE:if(editingValue().length())editingValue().remove(editingValue().length()-1);break;
     case SHIFT:keyboardUppercase=!keyboardUppercase;break;
     case SYMBOLS:keyboardSymbols=!keyboardSymbols;break;
-    case KEY_DONE:if(editField==0){openWifiInput(1);return;}screenMode=CONFIG;configPage=editField==2?ALERT_PAGE:WIFI_PAGE;break;
+    case KEY_DONE:
+      if(editField==3){configDraft.serverHost=sanitizeHost(configDraft.serverHost);screenMode=CONFIG;configPage=ALERT_PAGE;alertTab=3;break;}
+      if(editField==4){if(!configDraft.mqttTopic.length())configDraft.mqttTopic=DEFAULT_MQTT_TOPIC;screenMode=CONFIG;configPage=ALERT_PAGE;alertTab=3;break;}
+      if(editField==0){openWifiInput(1);return;}
+      screenMode=CONFIG;configPage=editField==2?ALERT_PAGE:WIFI_PAGE;break;
     case PREVIOUS:navigateAlarm(-1);return;
     case NEXT:navigateAlarm(1);return;
     case DETAIL:detailOpen=true;detailIndex=value;detailLine=0;invalidateMessageUi();break;

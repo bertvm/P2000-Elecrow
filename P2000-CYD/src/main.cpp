@@ -12,6 +12,7 @@
 #include <Arduino_GFX_Library.h>
 #include "board.h"
 #include "bounded_json.h"
+#include "p2000_feed.h"
 
 
 struct Settings {
@@ -20,6 +21,10 @@ struct Settings {
   bool sdLogging = false;
   bool services[5] = {true, true, true, true, true};
   uint32_t intervalSec = 60;
+  uint8_t feedMode = FEED_CLOUD;
+  String serverHost, mqttTopic, mqttUser, mqttPass;
+  uint16_t apiPort = DEFAULT_LOCAL_API_PORT;
+  uint16_t mqttPort = DEFAULT_MQTT_PORT;
 } cfg;
 
 struct Alarm {
@@ -147,7 +152,19 @@ const char PAGE[] PROGMEM = R"HTML(
 <h1>P2000 display</h1><form method=post action=/save>
 <label>Wifi-naam</label><input name=ssid required value="%SSID%">
 <label>Wifi-wachtwoord</label><input name=password type=password placeholder="ongewijzigd laten om te bewaren">
-<label>P2000 API URL</label><input name=apiUrl required value="%URL%"><small>Standaard: Alarmeringdroid API v2. Regio- en capcodefilters gebeuren op de ESP32.</small>
+<label>Bron</label><select name=feed>
+<option value="cloud" %FEED_CLOUD%>Alarmeringdroid (internet)</option>
+<option value="local" %FEED_LOCAL%>Lokale API (P2000-server)</option>
+<option value="mqtt" %FEED_MQTT%>MQTT (P2000-server)</option>
+</select>
+<label>Lokale server (IP of hostname van de Pi)</label><input name=serverHost value="%HOST%" placeholder="192.168.1.50">
+<small>P2000-server: lokale API op poort 8080 (/api2/find/) of MQTT op poort 1883, topic p2000/alerts. Zie https://github.com/bertvm/P2000-server</small>
+<label>Lokale API-poort</label><input name=apiPort type=number min=1 max=65535 value="%APIPORT%">
+<label>MQTT-poort</label><input name=mqttPort type=number min=1 max=65535 value="%MQTTPORT%">
+<label>MQTT-topic</label><input name=mqttTopic value="%MQTTTOPIC%" placeholder="p2000/alerts">
+<label>MQTT-gebruiker (optioneel)</label><input name=mqttUser value="%MQTTUSER%">
+<label>MQTT-wachtwoord (optioneel)</label><input name=mqttPass type=password placeholder="ongewijzigd laten om te bewaren">
+<label>P2000 API URL (alleen Alarmeringdroid)</label><input name=apiUrl value="%URL%"><small>Standaard: Alarmeringdroid API v2. Regio- en capcodefilters gebeuren op de ESP32.</small>
 <label>Regio 1</label><select name=region1>%REGION1_OPTIONS%</select>
 <label>Regio 2</label><select name=region2>%REGION2_OPTIONS%</select>
 <label>Regio 3</label><select name=region3>%REGION3_OPTIONS%</select>
@@ -168,6 +185,11 @@ String htmlEscape(String s) { s.replace("&", "&amp;"); s.replace("\"", "&quot;")
 String tpl(const String &key) {
   if (key == "SSID") return htmlEscape(cfg.ssid);
   if (key == "URL") return htmlEscape(cfg.apiUrl);
+  if (key == "HOST") return htmlEscape(cfg.serverHost);
+  if (key == "APIPORT") return String(cfg.apiPort);
+  if (key == "MQTTPORT") return String(cfg.mqttPort);
+  if (key == "MQTTTOPIC") return htmlEscape(cfg.mqttTopic);
+  if (key == "MQTTUSER") return htmlEscape(cfg.mqttUser);
   if (key == "CAPS") return htmlEscape(cfg.capcodes);
   if (key == "INTERVAL") return String(cfg.intervalSec);
   if (key == "STATUS") return htmlEscape(statusLine);
@@ -214,6 +236,12 @@ String settingsPage() {
   String page = FPSTR(PAGE);
   String formSsid = cfg.ssid;
   page.replace("%SSID%", htmlEscape(formSsid)); page.replace("%URL%", tpl("URL"));
+  page.replace("%HOST%", tpl("HOST")); page.replace("%APIPORT%", tpl("APIPORT"));
+  page.replace("%MQTTPORT%", tpl("MQTTPORT")); page.replace("%MQTTTOPIC%", tpl("MQTTTOPIC"));
+  page.replace("%MQTTUSER%", tpl("MQTTUSER"));
+  page.replace("%FEED_CLOUD%", cfg.feedMode == FEED_CLOUD ? "selected" : "");
+  page.replace("%FEED_LOCAL%", cfg.feedMode == FEED_LOCAL_API ? "selected" : "");
+  page.replace("%FEED_MQTT%", cfg.feedMode == FEED_MQTT ? "selected" : "");
   page.replace("%REGION1_OPTIONS%", regionOptions(cfg.regions[0]));
   page.replace("%REGION2_OPTIONS%", regionOptions(cfg.regions[1]));
   page.replace("%REGION3_OPTIONS%", regionOptions(cfg.regions[2])); page.replace("%CAPS%", tpl("CAPS"));
@@ -243,6 +271,15 @@ void loadSettings() {
   const char *serviceKeys[] = {"svcFire", "svcPolice", "svcAmb", "svcHeli", "svcOther"};
   for (uint8_t i = 0; i < 5; ++i) cfg.services[i] = prefs.isKey(serviceKeys[i]) ? prefs.getBool(serviceKeys[i]) : true;
   cfg.intervalSec = constrain(prefs.isKey("int") ? prefs.getUInt("int") : 60U, 15U, 3600U);
+  cfg.feedMode = prefs.isKey("feed") ? (uint8_t)prefs.getUChar("feed") : FEED_CLOUD;
+  if (cfg.feedMode > FEED_MQTT) cfg.feedMode = FEED_CLOUD;
+  cfg.serverHost = prefs.isKey("host") ? prefs.getString("host") : "";
+  cfg.apiPort = prefs.isKey("apiPort") ? (uint16_t)prefs.getUShort("apiPort") : DEFAULT_LOCAL_API_PORT;
+  cfg.mqttPort = prefs.isKey("mqttPort") ? (uint16_t)prefs.getUShort("mqttPort") : DEFAULT_MQTT_PORT;
+  cfg.mqttTopic = prefs.isKey("mqttTopic") ? prefs.getString("mqttTopic") : DEFAULT_MQTT_TOPIC;
+  if (!cfg.mqttTopic.length()) cfg.mqttTopic = DEFAULT_MQTT_TOPIC;
+  cfg.mqttUser = prefs.isKey("mqttUser") ? prefs.getString("mqttUser") : "";
+  cfg.mqttPass = prefs.isKey("mqttPass") ? prefs.getString("mqttPass") : "";
   prefs.end();
 }
 void saveSettings() {
@@ -250,6 +287,9 @@ void saveSettings() {
   prefs.putString("ssid", cfg.ssid); prefs.putString("pass", cfg.password); prefs.putString("url", cfg.apiUrl);
   prefs.putString("reg1", cfg.regions[0]); prefs.putString("reg2", cfg.regions[1]); prefs.putString("reg3", cfg.regions[2]);
   prefs.putString("caps", cfg.capcodes); prefs.putBool("ticker", cfg.ticker); prefs.putBool("sdlog", cfg.sdLogging); prefs.putUInt("int", cfg.intervalSec);
+  prefs.putUChar("feed", cfg.feedMode); prefs.putString("host", cfg.serverHost);
+  prefs.putUShort("apiPort", cfg.apiPort); prefs.putUShort("mqttPort", cfg.mqttPort);
+  prefs.putString("mqttTopic", cfg.mqttTopic); prefs.putString("mqttUser", cfg.mqttUser); prefs.putString("mqttPass", cfg.mqttPass);
   const char *serviceKeys[] = {"svcFire", "svcPolice", "svcAmb", "svcHeli", "svcOther"};
   for (uint8_t i = 0; i < 5; ++i) prefs.putBool(serviceKeys[i], cfg.services[i]);
   prefs.end();
@@ -385,7 +425,7 @@ bool matchesFilters(JsonObject item) {
   for (const String &region : cfg.regions) {
     if (!region.length()) continue;
     hasRegionFilter = true;
-    if (field(item, "regioid") == region) return capcodeMatches(item);
+    if (field(item, "regioid", "region_id") == region) return capcodeMatches(item);
   }
   if (hasRegionFilter) return false;
   // With no selected region, never fall back to a nationwide feed.
@@ -416,12 +456,13 @@ bool readAlarms(Stream &body) {
     if (alarmCount >= MAX_ALARMS) break;
     Alarm &a = alarms[alarmCount];
     a.id = field(item, "id");
-    a.time = field(item, "timestamp", "time");
+    a.time = field(item, "tijd", "time");
+    if (!a.time.length()) a.time = field(item, "timestamp");
     if (!a.time.length()) a.time = field(item, "datum") + " " + field(item, "tijd");
-    a.caps = field(item, "capcode", "capcodes");
-    if (!a.caps.length()) a.caps = field(item, "capstring");
+    a.caps = field(item, "capstring");
+    if (!a.caps.length()) a.caps = field(item, "capcode", "capcodes");
     a.service = field(item, "dienst", "service");
-    a.region = field(item, "regio"); a.place = field(item, "plaats");
+    a.region = field(item, "regio", "region"); a.place = field(item, "plaats", "place");
     a.text = field(item, "message", "text");
     if (!a.text.length()) a.text = field(item, "tekstmelding", "melding");
     if (!a.text.length()) a.text = field(item, "body", "description");
@@ -454,6 +495,7 @@ bool readAlarms(Stream &body) {
 }
 
 
+#include "mqtt_alerts.h"
 #include "compact_ui.h"
 void startConfigurationAp() {
   IPAddress apIp(192, 168, 77, 1), gateway(192, 168, 77, 1), mask(255, 255, 255, 0);
@@ -475,8 +517,14 @@ String wifiStatusText() {
   }
 }
 void pollApi() {
-  if (WiFi.status()!=WL_CONNECTED || !cfg.apiUrl.length()) return;
-  const String &url=cfg.apiUrl;
+  if (cfg.feedMode==FEED_MQTT || WiFi.status()!=WL_CONNECTED) return;
+  String url=activeApiUrl(cfg.feedMode,cfg.apiUrl,cfg.serverHost,cfg.apiPort);
+  if(!url.length()) {
+    apiChecked=true; apiConnected=false;
+    statusLine=cfg.feedMode==FEED_LOCAL_API?"Lokale API: stel het Pi-IP in":"API-URL ontbreekt";
+    drawScreen();
+    return;
+  }
   bool https=url.startsWith("https://");
   statusLine="API ophalen...";drawScreen();
   Serial.printf("API start: wifi=%d IP=%s RSSI=%d heap=%u\n",WiFi.status(),WiFi.localIP().toString().c_str(),WiFi.RSSI(),ESP.getFreeHeap());
@@ -546,7 +594,8 @@ void updateNetworkStatus() {
 
 String networkDiagnostics() {
   JsonDocument doc;
-  doc["firmware"]="1.0.1";doc["touch"]=CYD_TOUCH_NAME;
+  doc["firmware"]="1.0.2";doc["touch"]=CYD_TOUCH_NAME;
+  doc["feed"]=feedModeName(cfg.feedMode);doc["server"]=cfg.serverHost;
   doc["wifi_status"]=(int)WiFi.status();doc["disconnect_reason"]=(int)lastWifiReason;
   doc["ip"]=WiFi.localIP().toString();doc["gateway"]=WiFi.gatewayIP().toString();doc["dns"]=WiFi.dnsIP().toString();
   doc["rssi"]=WiFi.RSSI();doc["api_checked"]=apiChecked;doc["api_ok"]=apiConnected;
@@ -574,6 +623,15 @@ void startWeb() {
   server.on("/health", HTTP_GET, [](){ server.send(200, "text/plain", "P2000 CYD ESP32-2432S032 webserver OK\n"); });
   server.on("/save", HTTP_POST, []() {
     cfg.ssid=server.arg("ssid"); cfg.apiUrl=server.arg("apiUrl");
+    if (!cfg.apiUrl.length()) cfg.apiUrl = ALARMRINGDROID_URL;
+    cfg.feedMode = parseFeedMode(server.arg("feed"));
+    cfg.serverHost = server.arg("serverHost");
+    cfg.apiPort = parsePort(server.arg("apiPort"), DEFAULT_LOCAL_API_PORT);
+    cfg.mqttPort = parsePort(server.arg("mqttPort"), DEFAULT_MQTT_PORT);
+    cfg.mqttTopic = server.arg("mqttTopic");
+    if (!cfg.mqttTopic.length()) cfg.mqttTopic = DEFAULT_MQTT_TOPIC;
+    cfg.mqttUser = server.arg("mqttUser");
+    String mqttPass=server.arg("mqttPass"); if(mqttPass.length()) cfg.mqttPass=mqttPass;
     cfg.regions[0]=server.arg("region1"); cfg.regions[1]=server.arg("region2"); cfg.regions[2]=server.arg("region3");
     cfg.capcodes=server.arg("capcodes"); cfg.ticker = server.arg("display") == "ticker";
     cfg.sdLogging = server.arg("sdlog") == "on";
@@ -596,7 +654,7 @@ void startWeb() {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.printf("P2000 CYD 1.0.1 | ESP32-2432S032 | %s | ST7789 320x240\n", CYD_TOUCH_NAME);
+  Serial.printf("P2000 CYD 1.0.2 | ESP32-2432S032 | %s | ST7789 320x240\n", CYD_TOUCH_NAME);
   loadSettings();
   WiFi.persistent(false);
   WiFi.onEvent([](WiFiEvent_t event,WiFiEventInfo_t info) {
@@ -618,6 +676,7 @@ void loop() {
   server.handleClient();
   handleSerialDiagnostics();
   handleTouch();
+  pumpMqtt();
   updateWifiScan();
   updateNetworkStatus();
   if (cfg.ssid.length() && !wifiScanning && WiFi.status() != WL_CONNECTED &&
@@ -626,7 +685,7 @@ void loop() {
     connectWifi();
   }
   // Keep configuration and text entry responsive by polling only on the feed.
-  if (screenMode == MESSAGES && WiFi.status() == WL_CONNECTED &&
+  if (cfg.feedMode != FEED_MQTT && screenMode == MESSAGES && WiFi.status() == WL_CONNECTED &&
       (int32_t)(millis() - nextPoll) >= 0) {
     nextPoll = millis() + cfg.intervalSec * 1000UL;
     pollApi();

@@ -25,8 +25,8 @@ void checkButtons(){
 int main(){
  cfg.ssid="Testnetwerk";cfg.regions[0]="1";configDraft=cfg;
  for(int p=HOME_PAGE;p<=LEAVE_PAGE;++p){configPage=(ConfigPage)p;
-  for(int tab=0;tab<3;++tab){alertTab=tab;drawConfigScreen();checkButtons();}}
- for(int field=0;field<3;++field)for(int symbols=0;symbols<2;++symbols){editField=field;keyboardSymbols=symbols;drawWifiInputScreen();checkButtons();}
+  for(int tab=0;tab<4;++tab){alertTab=tab;drawConfigScreen();checkButtons();}}
+ for(int field=0;field<5;++field)for(int symbols=0;symbols<2;++symbols){editField=field;keyboardSymbols=symbols;drawWifiInputScreen();checkButtons();}
  scannedWifiCount=8;for(auto &s:scannedWifiSsids)s="Een lange wifi netwerknaam";
  drawWifiScanScreen();checkButtons();drawSdFormatConfirmScreen();checkButtons();
  screenMode=MESSAGES;invalidateMessageUi();drawScreen();checkButtons();

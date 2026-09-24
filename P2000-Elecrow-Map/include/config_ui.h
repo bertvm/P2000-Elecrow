@@ -6,13 +6,18 @@ uint8_t alertTab = 0, regionSlot = 0, regionStart = 0;
 String configNotice;
 void scanWifiNetworks();
 void openWifiInput(const String &ssid);
+void openFeedInput(WifiInputField field);
 void drawSdFormatConfirmScreen();
 void drawConfigScreen();
 
 bool configDirty() {
   if (configDraft.ssid != cfg.ssid || configDraft.password != cfg.password ||
       configDraft.capcodes != cfg.capcodes || configDraft.intervalSec != cfg.intervalSec ||
-      configDraft.ticker != cfg.ticker || configDraft.sdLogging != cfg.sdLogging) return true;
+      configDraft.ticker != cfg.ticker || configDraft.sdLogging != cfg.sdLogging ||
+      configDraft.feedMode != cfg.feedMode || configDraft.serverHost != cfg.serverHost ||
+      configDraft.apiPort != cfg.apiPort || configDraft.mqttPort != cfg.mqttPort ||
+      configDraft.mqttTopic != cfg.mqttTopic || configDraft.mqttUser != cfg.mqttUser ||
+      configDraft.mqttPass != cfg.mqttPass) return true;
   for (int i=0;i<3;++i) if (configDraft.regions[i] != cfg.regions[i]) return true;
   for (int i=0;i<5;++i) if (configDraft.services[i] != cfg.services[i]) return true;
   return false;
@@ -35,6 +40,8 @@ void applyConfig() {
   cfg=configDraft; saveSettings();
   if (cfg.sdLogging) initSdCard();
   if (wifiChanged && cfg.ssid.length()) { WiFi.disconnect(); connectWifi(); }
+  nextMqttRetry = 0;
+  if (cfg.feedMode != FEED_MQTT && mqttClient.connected()) mqttClient.disconnect();
   nextPoll=0; archiveMode=false; alarmCount=0; firstVisibleAlarm=0; infoAlarmIndex=0; invalidateMessageUi();
   configNotice=wifiChanged?"Opgeslagen. WiFi verbinden...":"Instellingen opgeslagen";
 }
@@ -48,7 +55,7 @@ void drawConfigScreen() {
     for (auto &r:configDraft.regions) if(r.length()) ++regions;
     for (bool s:configDraft.services) if(s) ++services;
     configButton(24,90,364,130,"Meldingen");
-    configText(String(regions)+" regio's | "+String(services)+" diensten",42,158);
+    configText(String(regions)+" regio's | "+String(services)+" diensten | "+feedModeName(configDraft.feedMode),42,158);
     configButton(412,90,364,130,"Weergave");
     configText(configDraft.ticker?"Infoscherm":"Meldingenlijst",430,158);
     configButton(24,240,364,130,"WiFi");
@@ -56,8 +63,8 @@ void drawConfigScreen() {
     configButton(412,240,364,130,"SD-kaart & archief");
     configText(configDraft.sdLogging?"Logging ingeschakeld":"Logging uitgeschakeld",430,310);
   } else if(configPage==ALERT_PAGE) {
-    const char *tabs[]={"Regio's","Diensten","Capcodes"};
-    for(int i=0;i<3;++i) configButton(24+i*254,82,244,50,tabs[i],alertTab==i);
+    const char *tabs[]={"Regio's","Diensten","Capcodes","Bron"};
+    for(int i=0;i<4;++i) configButton(24+i*193,82,185,50,tabs[i],alertTab==i);
     if(alertTab==0) for(int i=0;i<3;++i)
       configButton(24,150+i*75,752,60,"Regio "+String(i+1)+": "+(configDraft.regions[i].length()?regionName(configDraft.regions[i]):"Geen"));
     if(alertTab==1) {
@@ -68,6 +75,21 @@ void drawConfigScreen() {
       configButton(24,155,752,70,configDraft.capcodes.length()?configDraft.capcodes:"Capcodes invoeren");
       configText("Leeg = alle capcodes binnen je regio- en dienstenfilters",40,255);
       configText("Meerdere capcodes scheiden met een komma",40,280);
+    }
+    if(alertTab==3) {
+      configButton(24,150,240,70,"Cloud",configDraft.feedMode==FEED_CLOUD);
+      configButton(280,150,240,70,"Lokale API",configDraft.feedMode==FEED_LOCAL_API);
+      configButton(536,150,240,70,"MQTT",configDraft.feedMode==FEED_MQTT);
+      configButton(24,236,752,58,configDraft.serverHost.length()?("Server: "+configDraft.serverHost):"Server / Pi-IP invoeren");
+      if(configDraft.feedMode==FEED_CLOUD)
+        configText("Internet-API. URL aanpassen kan via de webpagina.",40,310);
+      else if(configDraft.feedMode==FEED_LOCAL_API) {
+        configText("http://<pi>:poort/api2/find/  van P2000-server",40,310);
+        configButton(24,330,120,50,"- 10"); configButton(160,330,480,50,"API "+String(configDraft.apiPort)); configButton(656,330,120,50,"+ 10");
+      } else {
+        configButton(24,310,752,50,"Topic: "+(configDraft.mqttTopic.length()?configDraft.mqttTopic:DEFAULT_MQTT_TOPIC));
+        configText("MQTT "+String(configDraft.mqttPort)+" | topic p2000/alerts (P2000-server)",40,372);
+      }
     }
   } else if(configPage==REGION_PAGE) {
     for(int i=0;i<4 && regionStart+i<REGION_COUNT;++i) {
@@ -127,10 +149,18 @@ void handleConfigTap(int x,int y) {
     configPage=y<220?(x<400?ALERT_PAGE:DISPLAY_PAGE):(x<400?WIFI_PAGE:SD_PAGE);
     if(configPage==SD_PAGE) initSdCard();
   } else if(configPage==ALERT_PAGE) {
-    if(y>=82 && y<132 && x>=24 && x<776) alertTab=min(2,(x-24)/254);
+    if(y>=82 && y<132 && x>=24 && x<776) alertTab=min(3,(x-24)/193);
     else if(alertTab==0 && y>=150 && y<360) {regionSlot=min(2,(y-150)/75);regionStart=0;configPage=REGION_PAGE;}
     else if(alertTab==1 && y>=150 && y<362) {int i=((y-150)/76)*2+(x>=408); if(i<5) configDraft.services[i]=!configDraft.services[i];}
     else if(alertTab==2 && y>=155 && y<225) configPage=CAPS_PAGE;
+    else if(alertTab==3) {
+      if(y>=150 && y<220) configDraft.feedMode=x<280?FEED_CLOUD:(x<536?FEED_LOCAL_API:FEED_MQTT);
+      else if(y>=236 && y<294) {openFeedInput(SERVER_HOST_FIELD);return;}
+      else if(configDraft.feedMode==FEED_LOCAL_API && y>=330 && y<380) {
+        if(x<144 && configDraft.apiPort>10) configDraft.apiPort-=10;
+        else if(x>=656 && configDraft.apiPort<65525) configDraft.apiPort+=10;
+      }       else if(configDraft.feedMode==FEED_MQTT && y>=310 && y<360) {openFeedInput(MQTT_TOPIC_FIELD);return;}
+    }
   } else if(configPage==REGION_PAGE) {
     if(y>=82 && y<338) {int i=regionStart+(y-82)/64; if(i<REGION_COUNT) {configDraft.regions[regionSlot]=REGIONS[i].id;configPage=ALERT_PAGE;}}
     else if(y>=345 && y<393) {if(x<400) regionStart=regionStart>=4?regionStart-4:0;else if(regionStart+4<REGION_COUNT) regionStart+=4;}

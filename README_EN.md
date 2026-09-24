@@ -34,11 +34,11 @@ Open the map directory as a standalone PlatformIO project and build or upload th
 2. Connect the ESP32-S3 over USB.
 3. Select the `elecrow_esp32s3_5in` environment and choose **Upload**.
 4. On first boot, connect to the `P2000-display` Wi-Fi network and open `http://192.168.77.1`.
-5. Save the Wi-Fi credentials, regions and optional capcode filters.
+5. Save the Wi-Fi credentials, regions and optional capcode filters. Under **Source** you can keep Alarmeringdroid or point the display at a LAN [P2000-server](https://github.com/bertvm/P2000-server) over HTTP (`http://<pi-ip>:8080/api2/find/`) or MQTT (`p2000/alerts` on port 1883).
 
-## Alarmeringdroid API
+## Alarmeringdroid API and local P2000-server
 
-The default endpoint is:
+The default cloud endpoint is:
 
 ```text
 https://beta.alarmeringdroid.nl/api2/find/
@@ -47,6 +47,8 @@ https://beta.alarmeringdroid.nl/api2/find/
 The endpoint returns an object containing a `meldingen` array. An alert is displayed when its `regioid` matches at least one of the three selected regions. Selecting **None** disables that particular region slot. If all three slots are **None**, no nationwide fallback feed is shown. Optional capcodes are matched against each alert's `capcodes` array.
 
 The firmware reads fields including `datum`, `tijd`, `tekstmelding`, `regioid`, `capstring` and `capcodes`. It also accepts alternative names such as `time`, `text`, `body` and `description`.
+
+With [P2000-server](https://github.com/bertvm/P2000-server) on the LAN, Config → Alerts → **Source** can poll `http://<pi-ip>:8080/api2/find/` or subscribe to MQTT topic `p2000/alerts` (port 1883). Region, service and capcode filters still run on the ESP32.
 
 ## Controls
 

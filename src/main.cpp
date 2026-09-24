@@ -12,6 +12,7 @@
 #include <Arduino_GFX_Library.h>
 #include "FreeSansBold10pt7b.h"
 #include "bounded_json.h"
+#include "p2000_feed.h"
 
 // Elecrow DIS07050H / CrowPanel ESP32-S3 5 inch (800x480 RGB) pinout.
 #define GFX_BL  2
@@ -30,6 +31,10 @@ struct Settings {
   bool sdLogging = false;
   bool services[5] = {true, true, true, true, true};
   uint32_t intervalSec = 60;
+  uint8_t feedMode = FEED_CLOUD;
+  String serverHost, mqttTopic, mqttUser, mqttPass;
+  uint16_t apiPort = DEFAULT_LOCAL_API_PORT;
+  uint16_t mqttPort = DEFAULT_MQTT_PORT;
 } cfg;
 
 struct Alarm {
@@ -76,7 +81,7 @@ bool wifiScanning = false;
 int wifiScanResult = 0;
 String wifiCandidateSsid;
 bool manualWifiEntry = false;
-enum WifiInputField : uint8_t { WIFI_SSID_FIELD, WIFI_PASSWORD_FIELD };
+enum WifiInputField : uint8_t { WIFI_SSID_FIELD, WIFI_PASSWORD_FIELD, SERVER_HOST_FIELD, MQTT_TOPIC_FIELD };
 WifiInputField activeWifiField = WIFI_SSID_FIELD;
 String wifiDraftSsid, wifiDraftPassword;
 bool keyboardSymbols = false, keyboardUppercase = false;
@@ -312,7 +317,19 @@ const char PAGE[] PROGMEM = R"HTML(
 <h1>P2000 display</h1><form method=post action=/save>
 <label>Wifi-naam</label><input name=ssid required value="%SSID%">
 <label>Wifi-wachtwoord</label><input name=password type=password placeholder="ongewijzigd laten om te bewaren">
-<label>P2000 API URL</label><input name=apiUrl required value="%URL%"><small>Standaard: Alarmeringdroid API v2. Regio- en capcodefilters gebeuren op de ESP32.</small>
+<label>Bron</label><select name=feed>
+<option value="cloud" %FEED_CLOUD%>Alarmeringdroid (internet)</option>
+<option value="local" %FEED_LOCAL%>Lokale API (P2000-server)</option>
+<option value="mqtt" %FEED_MQTT%>MQTT (P2000-server)</option>
+</select>
+<label>Lokale server (IP of hostname van de Pi)</label><input name=serverHost value="%HOST%" placeholder="192.168.1.50">
+<small>P2000-server: lokale API op poort 8080 (/api2/find/) of MQTT op poort 1883, topic p2000/alerts. Zie https://github.com/bertvm/P2000-server</small>
+<label>Lokale API-poort</label><input name=apiPort type=number min=1 max=65535 value="%APIPORT%">
+<label>MQTT-poort</label><input name=mqttPort type=number min=1 max=65535 value="%MQTTPORT%">
+<label>MQTT-topic</label><input name=mqttTopic value="%MQTTTOPIC%" placeholder="p2000/alerts">
+<label>MQTT-gebruiker (optioneel)</label><input name=mqttUser value="%MQTTUSER%">
+<label>MQTT-wachtwoord (optioneel)</label><input name=mqttPass type=password placeholder="ongewijzigd laten om te bewaren">
+<label>P2000 API URL (alleen Alarmeringdroid)</label><input name=apiUrl value="%URL%"><small>Standaard: Alarmeringdroid API v2. Regio- en capcodefilters gebeuren op de ESP32.</small>
 <label>Regio 1</label><select name=region1>%REGION1_OPTIONS%</select>
 <label>Regio 2</label><select name=region2>%REGION2_OPTIONS%</select>
 <label>Regio 3</label><select name=region3>%REGION3_OPTIONS%</select>
@@ -333,6 +350,11 @@ String htmlEscape(String s) { s.replace("&", "&amp;"); s.replace("\"", "&quot;")
 String tpl(const String &key) {
   if (key == "SSID") return htmlEscape(cfg.ssid);
   if (key == "URL") return htmlEscape(cfg.apiUrl);
+  if (key == "HOST") return htmlEscape(cfg.serverHost);
+  if (key == "APIPORT") return String(cfg.apiPort);
+  if (key == "MQTTPORT") return String(cfg.mqttPort);
+  if (key == "MQTTTOPIC") return htmlEscape(cfg.mqttTopic);
+  if (key == "MQTTUSER") return htmlEscape(cfg.mqttUser);
   if (key == "CAPS") return htmlEscape(cfg.capcodes);
   if (key == "INTERVAL") return String(cfg.intervalSec);
   if (key == "STATUS") return htmlEscape(statusLine);
@@ -379,6 +401,12 @@ String settingsPage() {
   String page = FPSTR(PAGE);
   String formSsid = manualWifiEntry ? "" : (wifiCandidateSsid.length() ? wifiCandidateSsid : cfg.ssid);
   page.replace("%SSID%", htmlEscape(formSsid)); page.replace("%URL%", tpl("URL"));
+  page.replace("%HOST%", tpl("HOST")); page.replace("%APIPORT%", tpl("APIPORT"));
+  page.replace("%MQTTPORT%", tpl("MQTTPORT")); page.replace("%MQTTTOPIC%", tpl("MQTTTOPIC"));
+  page.replace("%MQTTUSER%", tpl("MQTTUSER"));
+  page.replace("%FEED_CLOUD%", cfg.feedMode == FEED_CLOUD ? "selected" : "");
+  page.replace("%FEED_LOCAL%", cfg.feedMode == FEED_LOCAL_API ? "selected" : "");
+  page.replace("%FEED_MQTT%", cfg.feedMode == FEED_MQTT ? "selected" : "");
   page.replace("%REGION1_OPTIONS%", regionOptions(cfg.regions[0]));
   page.replace("%REGION2_OPTIONS%", regionOptions(cfg.regions[1]));
   page.replace("%REGION3_OPTIONS%", regionOptions(cfg.regions[2])); page.replace("%CAPS%", tpl("CAPS"));
@@ -408,6 +436,15 @@ void loadSettings() {
   const char *serviceKeys[] = {"svcFire", "svcPolice", "svcAmb", "svcHeli", "svcOther"};
   for (uint8_t i = 0; i < 5; ++i) cfg.services[i] = prefs.isKey(serviceKeys[i]) ? prefs.getBool(serviceKeys[i]) : true;
   cfg.intervalSec = prefs.isKey("int") ? prefs.getUInt("int") : 60;
+  cfg.feedMode = prefs.isKey("feed") ? (uint8_t)prefs.getUChar("feed") : FEED_CLOUD;
+  if (cfg.feedMode > FEED_MQTT) cfg.feedMode = FEED_CLOUD;
+  cfg.serverHost = prefs.isKey("host") ? prefs.getString("host") : "";
+  cfg.apiPort = prefs.isKey("apiPort") ? (uint16_t)prefs.getUShort("apiPort") : DEFAULT_LOCAL_API_PORT;
+  cfg.mqttPort = prefs.isKey("mqttPort") ? (uint16_t)prefs.getUShort("mqttPort") : DEFAULT_MQTT_PORT;
+  cfg.mqttTopic = prefs.isKey("mqttTopic") ? prefs.getString("mqttTopic") : DEFAULT_MQTT_TOPIC;
+  if (!cfg.mqttTopic.length()) cfg.mqttTopic = DEFAULT_MQTT_TOPIC;
+  cfg.mqttUser = prefs.isKey("mqttUser") ? prefs.getString("mqttUser") : "";
+  cfg.mqttPass = prefs.isKey("mqttPass") ? prefs.getString("mqttPass") : "";
   prefs.end();
 }
 void saveSettings() {
@@ -415,6 +452,9 @@ void saveSettings() {
   prefs.putString("ssid", cfg.ssid); prefs.putString("pass", cfg.password); prefs.putString("url", cfg.apiUrl);
   prefs.putString("reg1", cfg.regions[0]); prefs.putString("reg2", cfg.regions[1]); prefs.putString("reg3", cfg.regions[2]);
   prefs.putString("caps", cfg.capcodes); prefs.putBool("ticker", cfg.ticker); prefs.putBool("sdlog", cfg.sdLogging); prefs.putUInt("int", cfg.intervalSec);
+  prefs.putUChar("feed", cfg.feedMode); prefs.putString("host", cfg.serverHost);
+  prefs.putUShort("apiPort", cfg.apiPort); prefs.putUShort("mqttPort", cfg.mqttPort);
+  prefs.putString("mqttTopic", cfg.mqttTopic); prefs.putString("mqttUser", cfg.mqttUser); prefs.putString("mqttPass", cfg.mqttPass);
   const char *serviceKeys[] = {"svcFire", "svcPolice", "svcAmb", "svcHeli", "svcOther"};
   for (uint8_t i = 0; i < 5; ++i) prefs.putBool(serviceKeys[i], cfg.services[i]);
   prefs.end();
@@ -549,7 +589,7 @@ bool matchesFilters(JsonObject item) {
   for (const String &region : cfg.regions) {
     if (!region.length()) continue;
     hasRegionFilter = true;
-    if (field(item, "regioid") == region) return capcodeMatches(item);
+    if (field(item, "regioid", "region_id") == region) return capcodeMatches(item);
   }
   if (hasRegionFilter) return false;
   // With no selected region, never fall back to a nationwide feed.
@@ -580,12 +620,13 @@ bool readAlarms(Stream &body) {
     if (alarmCount >= MAX_ALARMS) break;
     Alarm &a = alarms[alarmCount];
     a.id = field(item, "id");
-    a.time = field(item, "timestamp", "time");
+    a.time = field(item, "tijd", "time");
+    if (!a.time.length()) a.time = field(item, "timestamp");
     if (!a.time.length()) a.time = field(item, "datum") + " " + field(item, "tijd");
-    a.caps = field(item, "capcode", "capcodes");
-    if (!a.caps.length()) a.caps = field(item, "capstring");
+    a.caps = field(item, "capstring");
+    if (!a.caps.length()) a.caps = field(item, "capcode", "capcodes");
     a.service = field(item, "dienst", "service");
-    a.region = field(item, "regio"); a.place = field(item, "plaats");
+    a.region = field(item, "regio", "region"); a.place = field(item, "plaats", "place");
     a.text = field(item, "message", "text");
     if (!a.text.length()) a.text = field(item, "tekstmelding", "melding");
     if (!a.text.length()) a.text = field(item, "body", "description");
@@ -611,6 +652,8 @@ bool readAlarms(Stream &body) {
   if (infoAlarmIndex >= alarmCount) infoAlarmIndex = 0;
   return true;
 }
+
+#include "mqtt_alerts.h"
 
 void drawWrapped(const String &s, int x, int &y, int maxWidth, int lineHeight, int charWidth) {
   String line, word;
@@ -805,16 +848,22 @@ String visiblePassword() {
 void drawWifiInputScreen() {
   invalidateMessageUi();
   gfx->fillScreen(BLACK); gfx->setTextWrap(false); gfx->setTextColor(WHITE); gfx->setTextSize(2);
-  gfx->setCursor(18, 12); gfx->print("WiFi instellen");
+  bool feedField = activeWifiField == SERVER_HOST_FIELD || activeWifiField == MQTT_TOPIC_FIELD;
+  gfx->setCursor(18, 12); gfx->print(feedField ? (activeWifiField == SERVER_HOST_FIELD ? "Lokale server" : "MQTT-topic") : "WiFi instellen");
   gfx->setTextColor(CYAN); gfx->setCursor(680, 12); gfx->print("Terug");
-  gfx->setTextSize(1); gfx->setCursor(510, 18); gfx->print(showWifiPassword ? "Verberg wachtwoord" : "Toon wachtwoord");
+  if (!feedField) {
+    gfx->setTextSize(1); gfx->setCursor(510, 18); gfx->print(showWifiPassword ? "Verberg wachtwoord" : "Toon wachtwoord");
+  }
   gfx->setTextSize(1); gfx->setTextColor(LIGHTGREY); gfx->setCursor(18, 38); gfx->print("Tik een veld aan en gebruik het toetsenbord");
-  gfx->drawRect(15, 52, 770, 40, activeWifiField == WIFI_SSID_FIELD ? CYAN : DARKGREY);
-  gfx->setTextColor(LIGHTGREY); gfx->setCursor(25, 58); gfx->print("SSID");
+  gfx->drawRect(15, 52, 770, 40, (activeWifiField != WIFI_PASSWORD_FIELD) ? CYAN : DARKGREY);
+  gfx->setTextColor(LIGHTGREY); gfx->setCursor(25, 58);
+  gfx->print(activeWifiField == MQTT_TOPIC_FIELD ? "Topic" : (activeWifiField == SERVER_HOST_FIELD ? "Host / IP" : "SSID"));
   gfx->setTextColor(WHITE); gfx->setTextSize(2); gfx->setCursor(95, 63); gfx->print(fitText(wifiDraftSsid, 54));
-  gfx->drawRect(15, 105, 770, 40, activeWifiField == WIFI_PASSWORD_FIELD ? CYAN : DARKGREY);
-  gfx->setTextColor(LIGHTGREY); gfx->setTextSize(1); gfx->setCursor(25, 111); gfx->print("Wachtwoord");
-  gfx->setTextColor(WHITE); gfx->setTextSize(2); gfx->setCursor(145, 116); gfx->print(fitText(visiblePassword(), 50));
+  if (!feedField) {
+    gfx->drawRect(15, 105, 770, 40, activeWifiField == WIFI_PASSWORD_FIELD ? CYAN : DARKGREY);
+    gfx->setTextColor(LIGHTGREY); gfx->setTextSize(1); gfx->setCursor(25, 111); gfx->print("Wachtwoord");
+    gfx->setTextColor(WHITE); gfx->setTextSize(2); gfx->setCursor(145, 116); gfx->print(fitText(visiblePassword(), 50));
+  }
   for (uint8_t row = 0; row < 4; ++row) {
     String keys = keyboardRow(row); int width = 760 / keys.length(); int y = 160 + row * 43;
     for (uint8_t key = 0; key < keys.length(); ++key) {
@@ -834,7 +883,23 @@ void openWifiInput(const String &ssid) {
   wifiDraftSsid = ssid; wifiDraftPassword = ssid == configDraft.ssid ? configDraft.password : ""; activeWifiField = WIFI_SSID_FIELD;
   keyboardSymbols = false; keyboardUppercase = false; screenMode = WIFI_INPUT; drawWifiInputScreen();
 }
+void openFeedInput(WifiInputField field) {
+  activeWifiField = field;
+  wifiDraftSsid = field == MQTT_TOPIC_FIELD ? configDraft.mqttTopic : configDraft.serverHost;
+  keyboardSymbols = field == SERVER_HOST_FIELD; keyboardUppercase = false;
+  screenMode = WIFI_INPUT; drawWifiInputScreen();
+}
 void saveWifiInput() {
+  if (activeWifiField == SERVER_HOST_FIELD) {
+    configDraft.serverHost = sanitizeHost(wifiDraftSsid);
+    configNotice = configDraft.serverHost.length() ? "Server opgeslagen in concept" : "Host gewist";
+    alertTab = 3; configPage = ALERT_PAGE; screenMode = CONFIG; drawConfigScreen(); return;
+  }
+  if (activeWifiField == MQTT_TOPIC_FIELD) {
+    configDraft.mqttTopic = wifiDraftSsid.length() ? wifiDraftSsid : DEFAULT_MQTT_TOPIC;
+    configNotice = "MQTT-topic opgeslagen in concept";
+    alertTab = 3; configPage = ALERT_PAGE; screenMode = CONFIG; drawConfigScreen(); return;
+  }
   if (!wifiDraftSsid.length()) { statusLine = "WiFi-naam ontbreekt"; drawWifiInputScreen(); return; }
   configDraft.ssid = wifiDraftSsid; configDraft.password = wifiDraftPassword;
   wifiCandidateSsid = ""; manualWifiEntry = false;
@@ -894,31 +959,34 @@ void handleTap(int x, int y) {
     return;
   }
   if (screenMode == WIFI_INPUT) {
-    if (x >= 500 && x < 660 && y <= 50) {showWifiPassword = !showWifiPassword;drawWifiInputScreen();return;}
-    if (x >= 660 && y <= 50) { screenMode = CONFIG; drawConfigScreen(); return; }
-    if (y >= 52 && y < 95) { activeWifiField = WIFI_SSID_FIELD; drawWifiInputScreen(); return; }
-    if (y >= 105 && y < 148) { activeWifiField = WIFI_PASSWORD_FIELD; drawWifiInputScreen(); return; }
+    bool feedField = activeWifiField == SERVER_HOST_FIELD || activeWifiField == MQTT_TOPIC_FIELD;
+    if (!feedField && x >= 500 && x < 660 && y <= 50) {showWifiPassword = !showWifiPassword;drawWifiInputScreen();return;}
+    if (x >= 660 && y <= 50) {
+      if (feedField) { alertTab = 3; configPage = ALERT_PAGE; }
+      screenMode = CONFIG; drawConfigScreen(); return;
+    }
+    if (!feedField && y >= 52 && y < 95) { activeWifiField = WIFI_SSID_FIELD; drawWifiInputScreen(); return; }
+    if (!feedField && y >= 105 && y < 148) { activeWifiField = WIFI_PASSWORD_FIELD; drawWifiInputScreen(); return; }
     if (y >= 160 && y < 332 && x >= 20 && x < 780) {
       uint8_t row = (y - 160) / 43;
       String keys = keyboardRow(row); int width = 760 / keys.length(); uint8_t key = (x - 20) / width;
       if (key < keys.length()) {
         char character = keys[key];
         if (!keyboardSymbols && keyboardUppercase && character >= 'a' && character <= 'z') character -= ('a' - 'A');
-        if (activeWifiField == WIFI_SSID_FIELD) { if (wifiDraftSsid.length()<32) wifiDraftSsid += character; }
-        else if (wifiDraftPassword.length()<64) wifiDraftPassword += character;
+        String &value = activeWifiField == WIFI_PASSWORD_FIELD ? wifiDraftPassword : wifiDraftSsid;
+        uint8_t limit = activeWifiField == WIFI_PASSWORD_FIELD ? 64 : 48;
+        if (value.length() < limit) value += character;
         drawWifiInputScreen();
       }
       return;
     }
     if (y >= 350 && y <= 430) {
-      if (x < 105) {
-        if (activeWifiField == WIFI_SSID_FIELD) wifiDraftSsid += ' '; else wifiDraftPassword += ' ';
-      } else if (x < 190) keyboardUppercase = !keyboardUppercase;
+      String &value = activeWifiField == WIFI_PASSWORD_FIELD ? wifiDraftPassword : wifiDraftSsid;
+      if (x < 105) value += ' ';
+      else if (x < 190) keyboardUppercase = !keyboardUppercase;
       else if (x < 305) keyboardSymbols = !keyboardSymbols;
-      else if (x < 430) {
-        String &value = activeWifiField == WIFI_SSID_FIELD ? wifiDraftSsid : wifiDraftPassword;
-        if (value.length()) value.remove(value.length() - 1);
-      } else saveWifiInput();
+      else if (x < 430) { if (value.length()) value.remove(value.length() - 1); }
+      else saveWifiInput();
       if (screenMode == WIFI_INPUT) drawWifiInputScreen();
     }
     return;
@@ -1056,10 +1124,16 @@ void handleTouch() {
 }
 
 void pollApi() {
-  if (WiFi.status() != WL_CONNECTED || !cfg.apiUrl.length()) return;
-  // Alarmeringdroid /api2/find returns the latest batch. Filters are applied
-  // locally in readAlarms(), preserving its documented response shape.
-  const String &url = cfg.apiUrl;
+  if (cfg.feedMode == FEED_MQTT || WiFi.status() != WL_CONNECTED) return;
+  String url = activeApiUrl(cfg.feedMode, cfg.apiUrl, cfg.serverHost, cfg.apiPort);
+  if (!url.length()) {
+    apiChecked = true; apiConnected = false;
+    statusLine = cfg.feedMode == FEED_LOCAL_API ? "Lokale API: stel het Pi-IP in" : "API-URL ontbreekt";
+    if (screenMode == MESSAGES) drawScreen();
+    return;
+  }
+  // Alarmeringdroid /api2/find and P2000-server share this envelope. Filters
+  // are applied locally in readAlarms().
   bool https = url.startsWith("https://");
   Serial.printf("API ophalen; IP=%s RSSI=%d heap=%u URL=%s\n",
                 WiFi.localIP().toString().c_str(), WiFi.RSSI(), ESP.getFreeHeap(), url.c_str());
@@ -1116,6 +1190,15 @@ void startWeb() {
   server.on("/health", HTTP_GET, [](){ server.send(200, "text/plain", "P2000-display webserver OK\n"); });
   server.on("/save", HTTP_POST, []() {
     cfg.ssid=server.arg("ssid"); cfg.apiUrl=server.arg("apiUrl");
+    if (!cfg.apiUrl.length()) cfg.apiUrl = ALARMRINGDROID_URL;
+    cfg.feedMode = parseFeedMode(server.arg("feed"));
+    cfg.serverHost = server.arg("serverHost");
+    cfg.apiPort = parsePort(server.arg("apiPort"), DEFAULT_LOCAL_API_PORT);
+    cfg.mqttPort = parsePort(server.arg("mqttPort"), DEFAULT_MQTT_PORT);
+    cfg.mqttTopic = server.arg("mqttTopic");
+    if (!cfg.mqttTopic.length()) cfg.mqttTopic = DEFAULT_MQTT_TOPIC;
+    cfg.mqttUser = server.arg("mqttUser");
+    String mqttPass=server.arg("mqttPass"); if(mqttPass.length()) cfg.mqttPass=mqttPass;
     cfg.regions[0]=server.arg("region1"); cfg.regions[1]=server.arg("region2"); cfg.regions[2]=server.arg("region3");
     cfg.capcodes=server.arg("capcodes"); cfg.ticker = server.arg("display") == "ticker";
     cfg.sdLogging = server.arg("sdlog") == "on";
@@ -1170,12 +1253,13 @@ void loop() {
     if (state != lastConfigWifiStatus) { lastConfigWifiStatus = state; drawConfigScreen(); }
   }
   if (!configurationMode) handleTouch();
+  pumpMqtt();
   if (cfg.ssid.length() && WiFi.status() != WL_CONNECTED && millis() > nextWifiRetry) {
     statusLine = "Wifi opnieuw verbinden...";
     if (screenMode == MESSAGES) drawScreen();
     connectWifi();
   }
-  if (WiFi.status() == WL_CONNECTED && millis() > nextPoll) { nextPoll = millis() + cfg.intervalSec * 1000UL; pollApi(); }
+  if (cfg.feedMode != FEED_MQTT && WiFi.status() == WL_CONNECTED && millis() > nextPoll) { nextPoll = millis() + cfg.intervalSec * 1000UL; pollApi(); }
   if (cfg.sdLogging && !sdReady && millis() > nextSdRetry) { nextSdRetry = millis() + 30000; initSdCard(); }
   delay(10);
 }

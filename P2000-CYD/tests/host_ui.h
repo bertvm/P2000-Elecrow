@@ -61,3 +61,6 @@ struct Wifi {
 struct Preferences{};
 struct WebServer{WebServer(int){}void handleClient(){}};
 bool readTouch(int&,int&){return false;}
+#include "p2000_feed.h"
+struct MqttStub{bool connected(){return false;}void disconnect(){}} mqttClient;
+unsigned long nextMqttRetry=0;
