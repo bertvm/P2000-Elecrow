@@ -396,10 +396,15 @@ bool loadArchivePage(uint32_t offset) {
   return archiveAlarmCount > 0;
 }
 
+String jsonScalar(JsonVariantConst value) {
+  if (value.isNull() || value.is<JsonArray>() || value.is<JsonObject>()) return "";
+  if (value.is<const char*>()) return String(value.as<const char*>());
+  return value.as<String>();
+}
 String field(JsonObject obj, const char *a, const char *b = "") {
-  if (obj[a].is<const char*>()) return String(obj[a].as<const char*>());
-  if (obj[a].is<long>()) return String(obj[a].as<long>());
-  if (*b && obj[b].is<const char*>()) return String(obj[b].as<const char*>());
+  String value = jsonScalar(obj[a]);
+  if (value.length()) return value;
+  if (*b) return jsonScalar(obj[b]);
   return "";
 }
 String normalizedCapcode(String value) {
@@ -434,6 +439,7 @@ bool matchesFilters(JsonObject item) {
 bool serviceMatches(const Alarm &alarm) {
   return cfg.services[serviceFilterIndex(serviceIcon(alarm))];
 }
+#include "alarm_merge.h"
 bool readAlarms(Stream &body) {
   BoundedJsonAllocator allocator(64 * 1024);
   JsonDocument doc(&allocator);
@@ -446,51 +452,29 @@ bool readAlarms(Stream &body) {
   else if (doc["results"].is<JsonArray>()) list = doc["results"].as<JsonArray>();
   else if (doc["data"].is<JsonArray>()) list = doc["data"].as<JsonArray>();
   else { statusLine = "JSON bevat geen berichtenlijst"; return false; }
-  String currentlyShownId = (alarmCount && infoAlarmIndex < alarmCount) ? alarms[infoAlarmIndex].id : "";
-  String previousIds[MAX_ALARMS];
-  uint8_t previousCount = alarmCount;
-  for (uint8_t i = 0; i < previousCount; ++i) previousIds[i] = alarms[i].id;
-  alarmCount = 0;
+  Alarm batch[MAX_ALARMS];
+  uint8_t batchCount = 0;
   for (JsonObject item : list) {
     if (!matchesFilters(item)) continue;
-    if (alarmCount >= MAX_ALARMS) break;
-    Alarm &a = alarms[alarmCount];
-    a.id = field(item, "id");
-    a.time = field(item, "tijd", "time");
-    if (!a.time.length()) a.time = field(item, "timestamp");
-    if (!a.time.length()) a.time = field(item, "datum") + " " + field(item, "tijd");
-    a.caps = field(item, "capstring");
-    if (!a.caps.length()) a.caps = field(item, "capcode", "capcodes");
-    a.service = field(item, "dienst", "service");
-    a.region = field(item, "regio", "region"); a.place = field(item, "plaats", "place");
-    a.text = field(item, "message", "text");
-    if (!a.text.length()) a.text = field(item, "tekstmelding", "melding");
-    if (!a.text.length()) a.text = field(item, "body", "description");
-    if (!serviceMatches(a)) continue;
-    ++alarmCount;
+    Alarm candidate;
+    if (!fillAlarmFromItem(item, candidate) || !serviceMatches(candidate) || haveAlarm(candidate)) continue;
+    bool duplicate = false;
+    for (uint8_t i = 0; i < batchCount; ++i) if (sameAlarm(batch[i], candidate)) { duplicate = true; break; }
+    if (duplicate) continue;
+    batch[batchCount++] = candidate;
+    if (batchCount >= MAX_ALARMS) break;
   }
-  // API order is newest first; write oldest first so reverse SD traversal
-  // presents the archive newest first as well.
-  for (int i = alarmCount - 1; i >= 0; --i) {
-    bool alreadyListed = false;
-    for (uint8_t j = 0; j < previousCount; ++j)
-      if (alarms[i].id.length() && alarms[i].id == previousIds[j]) { alreadyListed = true; break; }
-    if (!alreadyListed) appendAlarmLog(alarms[i]);
+  if (!batchCount) {
+    if (!alarmCount) statusLine = "Geen meldingen";
+    return true;
   }
-  statusLine = String(alarmCount) + " berichten bijgewerkt";
-  if (alarmCount) {
-    bool newMessage = newestInfoId.length() && alarms[0].id != newestInfoId;
-    if (!newestInfoId.length() || newMessage) {
-      infoAlarmIndex = 0;
-      firstVisibleAlarm = 0;
-    } else {
-      if (firstVisibleAlarm >= alarmCount) firstVisibleAlarm = alarmCount - 1;
-      for (uint8_t i = 0; i < alarmCount; ++i)
-        if (alarms[i].id == currentlyShownId) { infoAlarmIndex = i; break; }
-    }
-    newestInfoId = alarms[0].id;
-  } else firstVisibleAlarm = 0;
-  if (infoAlarmIndex >= alarmCount) infoAlarmIndex = 0;
+  // API order is newest first; prepend oldest-new first so the newest lands on top
+  // and the SD log still receives chronological (oldest-first) rows.
+  for (int i = (int)batchCount - 1; i >= 0; --i) prependAlarm(batch[i]);
+  firstVisibleAlarm = 0;
+  infoAlarmIndex = 0;
+  newestInfoId = alarms[0].id;
+  statusLine = batchCount == 1 ? "1 nieuwe melding" : String(batchCount) + " nieuwe meldingen";
   return true;
 }
 

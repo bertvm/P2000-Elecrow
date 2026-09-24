@@ -16,17 +16,18 @@ int main(int argc,char **argv){
  const std::string row=R"({"id":42,"regioid":1,"datum":"2026-09-05","tijd":"11:30","tekstmelding":"Brandweer test","dienst":"brandweer","capcodes":[{"capcode":"012345"}]})";
  assert(parse("{\"meldingen\":["+row+"]}"));assert(alarmCount==1&&alarms[0].id=="42");
  assert(logged.size()==1);assert(parse("["+row+"]"));assert(logged.size()==1);
- cfg.capcodes="999";assert(parse("["+row+"]"));assert(alarmCount==0);
- cfg.capcodes="";cfg.regions[0]="";assert(parse("["+row+"]"));assert(alarmCount==0);
- cfg.regions[1]="1";cfg.services[FILTER_FIRE]=false;assert(parse("["+row+"]"));assert(alarmCount==0);
+  cfg.capcodes="999";assert(parse("["+row+"]"));assert(alarmCount==1&&alarms[0].id=="42");
+ cfg.capcodes="";cfg.regions[0]="";assert(parse("["+row+"]"));assert(alarmCount==1);
+ cfg.regions[1]="1";cfg.services[FILTER_FIRE]=false;assert(parse("["+row+"]"));assert(alarmCount==1);
  cfg.services[FILTER_FIRE]=true;assert(parse("["+row+"]"));assert(alarmCount==1);
  assert(!parse("{\"meldingen\":["));assert(alarmCount==1&&alarms[0].id=="42");
  assert(!parse("{\"status\":\"unavailable\"}"));assert(alarmCount==1);
  assert(!parse("[{\"tekstmelding\":\""+std::string(100000,'x')+"\"}]"));assert(alarmCount==1);
- assert(parse("[]"));assert(alarmCount==0);
+ assert(parse("[]"));assert(alarmCount==1);
  // The archive must receive oldest first when the response is newest first.
  logged.clear();assert(parse(R"([{"id":3,"regioid":1,"text":"nieuw"},{"id":2,"regioid":1,"text":"oud"}])"));
  assert(logged.size()==2&&logged[0]=="2"&&logged[1]=="3");
+ assert(alarms[0].id=="3"&&alarms[1].id=="2"&&alarms[2].id=="42");
  // Allocator growth/shrink/failure preserves existing allocation accounting.
  BoundedJsonAllocator a(128);void*p=a.allocate(100);assert(p);assert(!a.allocate(40));
  assert(!a.reallocate(p,200));p=a.reallocate(p,40);assert(p);void*q=a.allocate(80);assert(q);
